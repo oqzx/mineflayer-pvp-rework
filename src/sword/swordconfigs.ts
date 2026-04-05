@@ -11,7 +11,11 @@ export interface FullConfig {
   shieldDisableConfig: ShieldDisableConfig;
   rotateConfig: RotateConfig;
   followConfig: FollowConfig;
-  cps?: number; // version specific
+  hitSelectConfig: HitSelectConfig;
+  blockHitConfig: BlockHitConfig;
+  heightAdvantageConfig: HeightAdvantageConfig;
+  antiTrapConfig: AntiTrapConfig;
+  cps?: number;
 }
 
 export type ShieldDisableConfig = {
@@ -33,7 +37,7 @@ export type SwingBehaviorConfig = {
 };
 
 export type StrafeModeConfig = {
-  mode: "circle" | "random" | "intelligent";
+  mode: "circle" | "random" | "intelligent" | "predictive";
   maxOffset?: number;
 };
 
@@ -49,10 +53,7 @@ export type TapConfig = {
 };
 
 export type KBConfig =
-  | {
-      enabled: boolean;
-      mode: "jump";
-    }
+  | { enabled: boolean; mode: "jump" }
   | { enabled: boolean; mode: "velocity"; hRatio?: number; yRatio: number }
   | { enabled: boolean; mode: "shift" | "jumpshift"; delay?: number };
 
@@ -64,19 +65,14 @@ export type OnHitConfig = {
 };
 
 export type ReactionCritConfig =
-  | {
-      enabled: false;
-    }
+  | { enabled: false }
   | { enabled: true; maxWaitTicks?: number; maxWaitDistance?: number; maxPreemptiveTicks?: number };
 
 export type CriticalsConfig = {
   enabled: boolean;
   reaction: ReactionCritConfig;
 } & (
-  | {
-      mode: "hop" | "shorthop";
-      attemptRange?: number;
-    }
+  | { mode: "hop" | "shorthop"; attemptRange?: number }
   | { enabled: boolean; mode: "packet"; bypass?: boolean }
 );
 
@@ -95,9 +91,28 @@ export type RotateConfig = {
 export type FollowConfig = {
   mode: "jump" | "standard";
   distance: number;
-} & ({ predict: false } | { predict: true, predictTicks?: number})
+} & ({ predict: false } | { predict: true; predictTicks?: number });
 
+export type HitSelectConfig = {
+  enabled: boolean;
+  requireFullCharge: boolean;
+  iframeGate: boolean;
+};
 
+export type BlockHitConfig = {
+  enabled: boolean;
+  windowTicks: number;
+};
+
+export type HeightAdvantageConfig = {
+  enabled: boolean;
+  jumpThreshold: number;
+};
+
+export type AntiTrapConfig = {
+  enabled: boolean;
+  detectionTicks: number;
+};
 
 export const defaultConfig: FullConfig = {
   genericConfig: {
@@ -116,7 +131,7 @@ export const defaultConfig: FullConfig = {
   strafeConfig: {
     enabled: true,
     mode: {
-      mode: "intelligent",
+      mode: "predictive",
       maxOffset: Math.PI / 2,
     },
   },
@@ -136,7 +151,7 @@ export const defaultConfig: FullConfig = {
     mode: "backoff",
     kbCancel: {
       enabled: true,
-      mode: "jump", 
+      mode: "jump",
     },
   },
   rotateConfig: {
@@ -151,7 +166,7 @@ export const defaultConfig: FullConfig = {
   },
   shieldDisableConfig: {
     enabled: true,
-    mode: "single", // not used rn
+    mode: "single",
   },
   swingConfig: {
     mode: "fullswing",
@@ -159,21 +174,35 @@ export const defaultConfig: FullConfig = {
   followConfig: {
     mode: "standard",
     distance: 3,
-    predict: true
+    predict: true,
+    predictTicks: 4,
   },
-  cps: 15
+  hitSelectConfig: {
+    enabled: true,
+    requireFullCharge: true,
+    iframeGate: true,
+  },
+  blockHitConfig: {
+    enabled: true,
+    windowTicks: 3,
+  },
+  heightAdvantageConfig: {
+    enabled: true,
+    jumpThreshold: 0.4,
+  },
+  antiTrapConfig: {
+    enabled: true,
+    detectionTicks: 4,
+  },
+  cps: 15,
 };
 
 export function getConfig(bot: Bot): FullConfig {
-  // deep clone the default config
-  const ret= JSON.parse(JSON.stringify(defaultConfig)) as FullConfig;
-
-  if (bot.supportFeature('doesntHaveOffHandSlot')) {
-    ret.critConfig.reaction.enabled = false; // don't bother, just hit when you can
-    ret.shieldDisableConfig.enabled = false; // no offhand, no need to disable shield
-    ret.shieldConfig.enabled = false; // no offhand, no need to use shield
+  const ret = JSON.parse(JSON.stringify(defaultConfig)) as FullConfig;
+  if (bot.supportFeature("doesntHaveOffHandSlot")) {
+    ret.critConfig.reaction.enabled = false;
+    ret.shieldDisableConfig.enabled = false;
+    ret.shieldConfig.enabled = false;
   }
-
   return ret;
-
 }
