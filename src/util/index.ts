@@ -1,1 +1,2 @@
-export * from "./customAttack"
+export * from './attack.js';
+export * from './humanizer.js';
