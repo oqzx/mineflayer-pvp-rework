@@ -19,6 +19,7 @@ import type { PvpData } from './pvp-data.js';
 import { IdleBehavior } from './behaviors/idle.js';
 import { buildTransitions } from './behaviors/transitions.js';
 import '@nxg-org/mineflayer-auto-buff';
+import { StateBehaviorBuilder } from '@nxg-org/mineflayer-static-statemachine/lib/util.js';
 
 const DRAIN_LIMIT = 16;
 
@@ -41,7 +42,7 @@ export class StateMachine extends EventEmitter {
   public snapshot: CombatSnapshot = createSnapshot();
 
   private readonly data: PvpData;
-  private readonly botStateMachine: BotStateMachine<typeof IdleBehavior, []>;
+  private readonly botStateMachine: BotStateMachine<typeof IdleBehavior, StateBehaviorBuilder[]>;
   private readonly health: HealthManager;
   private readonly targetSelector: TargetSelector;
   private tick = 0;
@@ -77,7 +78,7 @@ export class StateMachine extends EventEmitter {
     health.on('lowHealth', () => this.onLowHealth());
 
     const transitions = buildTransitions();
-    const rootMachine = getNestedMachine('CombatRoot', transitions, IdleBehavior).build();
+    const rootMachine = getNestedMachine('CombatRoot', transitions, IdleBehavior, []).build();
 
     this.botStateMachine = new BotStateMachine({
       bot,
@@ -110,7 +111,7 @@ export class StateMachine extends EventEmitter {
   }
 
   stop(): void {
-    this.data.entity = undefined;
+    delete this.data.entity;
     this.data.sword.stop();
     this.data.projectile.stop();
     this.drainStateMachine();
@@ -192,7 +193,7 @@ export class StateMachine extends EventEmitter {
 
   private onEntityGone = (entity: Entity): void => {
     if (this.data.entity?.id === entity.id) {
-      this.data.entity = undefined;
+      delete this.data.entity;
       this.data.sword.stop();
     }
   };
