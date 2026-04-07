@@ -523,10 +523,10 @@ export class SwordCombat extends EventEmitter {
     const force = !rotateCfg.smooth;
 
     if (rotateCfg.mode === 'constant' || this.ticksToNextAttack === -1) {
-      this.bot.look(targetYaw, targetPitch, force);
+      void this.bot.look(targetYaw, targetPitch, force);
     } else if (rotateCfg.mode === 'legit') {
       if (predFrame.isComboWindowOpen || predFrame.hitChanceEstimate > 0.6) {
-        this.bot.look(targetYaw, targetPitch, false);
+        void this.bot.look(targetYaw, targetPitch, false);
       }
     }
   }
