@@ -20,7 +20,7 @@ type RangedWeapon =
   | 'fireball'
   | 'none'
 
-function detectBestWeapon(bot: Bot, preferBow: boolean): RangedWeapon {
+export function getBestRangedWeapon(bot: Bot, preferBow: boolean): RangedWeapon {
   const inv = bot.util.inv.getAllItems()
   const hasBow = inv.some((i) => i.name === 'bow')
   const hasArrows = inv.some((i) => i.name.includes('arrow'))
@@ -32,6 +32,10 @@ function detectBestWeapon(bot: Bot, preferBow: boolean): RangedWeapon {
   if (!preferBow && hasFireball) return 'fireball'
   if (hasBow && hasArrows) return 'bow'
   return 'none'
+}
+
+export function canUseProjectileWeapon(bot: Bot, preferBow: boolean): boolean {
+  return getBestRangedWeapon(bot, preferBow) !== 'none'
 }
 
 function getChargeTime(weapon: RangedWeapon, bot: Bot): number {
@@ -66,6 +70,8 @@ export class ProjectileHandler {
   private readonly aiming: BowAiming
   private readonly getShotTick: () => void
   private readonly chargeAndFire: () => void
+  private engageRequestId: number = 0
+  private engagingTargetId: number | null = null
 
   constructor(
     private readonly bot: Bot,
@@ -81,24 +87,45 @@ export class ProjectileHandler {
     return this.active
   }
 
-  async engage(target: Entity): Promise<void> {
-    if (this.target === target) return
-    this.stop()
+  canEngage(): boolean {
+    return canUseProjectileWeapon(this.bot, this.bowConfig.preferOverFireball)
+  }
 
-    this.weapon = detectBestWeapon(this.bot, this.bowConfig.preferOverFireball)
-    if (this.weapon === 'none') return
+  async engage(target: Entity): Promise<void> {
+    const requestId = ++this.engageRequestId
+    const targetId = target.id
+
+    if (this.active && this.target === target) return
+    if (this.engagingTargetId === targetId) return
+
+    this.stop()
+    this.engagingTargetId = targetId
+
+    this.weapon = getBestRangedWeapon(this.bot, this.bowConfig.preferOverFireball)
+    if (this.weapon === 'none') {
+      this.engagingTargetId = null
+      return
+    }
 
     const equipped = await this.equipWeapon()
-    if (!equipped) return
+    if (requestId !== this.engageRequestId) return
+
+    if (!equipped) {
+      this.engagingTargetId = null
+      return
+    }
 
     this.active = true
     this.target = target
+    this.engagingTargetId = null
     this.bot.tracker.trackEntity(target)
     this.bot.on('physicsTick', this.getShotTick)
     this.bot.on('physicsTick', this.chargeAndFire)
   }
 
   stop(): void {
+    this.engageRequestId++
+    this.engagingTargetId = null
     this.bot.removeListener('physicsTick', this.getShotTick)
     this.bot.removeListener('physicsTick', this.chargeAndFire)
     if (this.target) this.bot.tracker.stopTrackingEntity(this.target)

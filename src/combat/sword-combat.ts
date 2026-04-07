@@ -124,7 +124,8 @@ export class SwordCombat extends EventEmitter {
   private readonly fittsTracker: FittsAimTracker
 
   private willBeFirstHit = true
-  private followGoal: FollowGoal | undefined = undefined
+  private followGoal: goals.Goal | undefined = undefined
+  private followGoalTargetId: number | undefined = undefined
   private lastHealth = 20
   private currentTick = 0
   private lookAwayTicksLeft = 0
@@ -832,15 +833,12 @@ export class SwordCombat extends EventEmitter {
 
   private startFollow(): void {
     if (!this.target) return
+    if (this.followGoal && this.followGoalTargetId === this.target.id) return
     const pf = (this.bot as BotWithPathfinder).pathfinder
     if (!pf) return
-    const predictTicks = this.config.follow.predictive ? this.config.follow.predictTicks : 0
-    this.followGoal = new FollowGoal(
-      this.bot,
-      this.target,
-      this.config.follow.distance,
-      predictTicks,
-    )
+    this.stopFollow()
+    this.followGoal = new goals.GoalFollow(this.target, this.config.follow.distance)
+    this.followGoalTargetId = this.target.id
     pf.setGoal(this.followGoal, true)
   }
 
@@ -849,6 +847,7 @@ export class SwordCombat extends EventEmitter {
     const pf = (this.bot as BotWithPathfinder).pathfinder
     if (pf) pf.stop()
     this.followGoal = undefined
+    this.followGoalTargetId = undefined
   }
 
   private onTargetSwing = (entity: Entity): void => {

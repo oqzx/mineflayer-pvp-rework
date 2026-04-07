@@ -8,7 +8,7 @@ import { StunnedBehavior } from './stunned.js'
 import { BackingOffBehavior } from './backing-off.js'
 import { CriticalSetupBehavior } from './critical-setup.js'
 import { RetreatBehavior } from './retreat.js'
-import { BowCombatBehavior } from './bow-combat.js'
+import { BowCombatBehavior, canEnterBowCombat } from './bow-combat.js'
 import { DodgeBehavior } from './dodge.js'
 import { EatingBehavior } from './eating.js'
 import { PearlingBehavior } from './pearling.js'
@@ -122,8 +122,10 @@ export function buildTransitions() {
   const meleeToBow = getTransition('meleeToBow', [...MELEE], BowCombatBehavior)
     .setShouldTransition((s) => {
       const d = pvp(s)
-      if (!d.config.bow.enabled || !d.entity) return false
-      return d.entity.position.distanceTo(s.bot.entity.position) > d.config.generic.attackRange + 2
+      if (!canEnterBowCombat(d)) return false
+      const target = d.entity
+      if (!target) return false
+      return target.position.distanceTo(s.bot.entity.position) > d.config.generic.attackRange + 2
     })
     .build()
 
@@ -131,6 +133,7 @@ export function buildTransitions() {
     .setShouldTransition((s) => {
       const d = pvp(s)
       if (!d.entity) return false
+      if (!canEnterBowCombat(d)) return true;
       return d.entity.position.distanceTo(s.bot.entity.position) <= d.config.generic.attackRange + 1
     })
     .build()
