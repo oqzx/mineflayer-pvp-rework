@@ -252,8 +252,8 @@ export class SwordCombat extends EventEmitter {
     this.doStrafe(strategy, blendWeights, fatigueModifiers.strafeFrequencyMultiplier);
     void this.height.seekWithJumpBoost(this.bot, this.target, true, this.config.jumpBoost.useForHeightAdvantage);
     this.checkAntiTrap();
-    void this.checkShieldDisable();
-    void this.handleCrits();
+    this.checkShieldDisable().catch(() => {});
+    this.handleCrits().catch(() => {});
     this.handleShieldToggle();
 
     if (this.kbCounterTicksLeft > 0) {
