@@ -10,7 +10,7 @@ import type { GapHandler } from '../tactics/gap-handler.js';
 import type { TargetSelector } from '../multi-enemy/target-selector.js';
 import type { TeamHandler } from '../multi-enemy/team-handler.js';
 import type { PotionHandler } from '../health/potion-handler.js';
-import type { AutoBuff } from '@nxg-org/mineflayer-auto-buff/lib/AutoBuff.js';
+import type { AutoBuff } from '@nxg-org/mineflayer-auto-buff';
 import { createSnapshot } from './combat-state.js';
 
 export interface PvpData extends StateMachineData {
