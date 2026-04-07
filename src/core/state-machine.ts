@@ -18,6 +18,13 @@ import { HealthManager } from '../health/health-manager.js';
 import { PotionHandler } from '../health/potion-handler.js';
 import { TargetSelector } from '../multi-enemy/target-selector.js';
 import { TeamHandler } from '../multi-enemy/team-handler.js';
+import type { IDecisionAgent } from '../engine/agent-interface.js';
+
+const DRAIN_LIMIT = 16;
+
+const MELEE_PHASES = new Set<CombatPhase>([
+  'engaging', 'combo', 'backing-off', 'critical-setup', 'stunned',
+]);
 
 export class StateMachine extends EventEmitter {
   public phase: CombatPhase = 'idle';
@@ -35,15 +42,16 @@ export class StateMachine extends EventEmitter {
 
   private primaryTarget: Entity | undefined = undefined;
   private manualTarget: Entity | undefined = undefined;
-  private tick: number = 0;
+  private tick = 0;
   private incomingProjectiles: IncomingProjectile[] = [];
 
   constructor(
     private readonly bot: Bot,
     private readonly config: FullConfig,
+    agents?: { decision?: IDecisionAgent },
   ) {
     super();
-    this.sword = new SwordCombat(bot, config);
+    this.sword = new SwordCombat(bot, config, agents?.decision);
     this.projectile = new ProjectileHandler(bot, config.bow, config.fireball);
     this.pearl = new PearlHandler(config.pearl);
     this.dodge = new DodgeController(config.dodge);
@@ -67,7 +75,8 @@ export class StateMachine extends EventEmitter {
   attack(target: Entity): void {
     this.manualTarget = target;
     this.primaryTarget = target;
-    this.transition('engaging');
+    this.applyTransition('engaging');
+    this.drainTransitions();
   }
 
   stop(): void {
@@ -75,7 +84,7 @@ export class StateMachine extends EventEmitter {
     this.primaryTarget = undefined;
     this.sword.stop();
     this.projectile.stop();
-    this.transition('idle');
+    this.applyTransition('idle');
   }
 
   get currentTarget(): Entity | undefined {
@@ -87,10 +96,11 @@ export class StateMachine extends EventEmitter {
     this.targetSelector.tick();
     this.scanProjectiles();
     this.updateSnapshot();
-    this.runPhase();
+    this.tickCurrentPhase();
+    this.drainTransitions();
   };
 
-  private runPhase(): void {
+  private tickCurrentPhase(): void {
     switch (this.phase) {
       case 'idle':
         this.tickIdle();
@@ -105,189 +115,191 @@ export class StateMachine extends EventEmitter {
       case 'retreating':
         this.tickRetreating();
         break;
-      case 'eating':
-        break;
-      case 'pearling':
-        break;
       case 'bow-combat':
         this.tickBowCombat();
         break;
-      case 'dodging':
-        break;
-      case 'blocking':
-        break;
+    }
+  }
+
+  private drainTransitions(): void {
+    for (let i = 0; i < DRAIN_LIMIT; i++) {
+      const next = this.resolveNextPhase();
+      if (next === null) break;
+      this.applyTransition(next);
+    }
+  }
+
+  private resolveNextPhase(): CombatPhase | null {
+    const snap = this.snapshot;
+    const phase = this.phase;
+
+    if (this.incomingProjectiles.length > 0 && phase !== 'dodging') {
+      const proj = this.incomingProjectiles[0];
+      if (proj && proj.estimatedImpactTick - this.tick <= 4) return 'dodging';
     }
 
-    this.checkTransitions();
+    if (phase === 'dodging' && this.incomingProjectiles.length === 0) {
+      return this.primaryTarget ? 'engaging' : 'idle';
+    }
+
+    if (phase === 'pearling' && !this.pearl.isThrowing) {
+      return this.primaryTarget ? 'engaging' : 'idle';
+    }
+
+    if (phase === 'eating' && !this.gap.isEating) {
+      return this.primaryTarget ? 'engaging' : 'idle';
+    }
+
+    if (this.health.isCritical && phase !== 'retreating' && phase !== 'eating') {
+      return 'retreating';
+    }
+
+    if (!this.primaryTarget && phase !== 'idle') {
+      return 'idle';
+    }
+
+    if (this.primaryTarget && phase === 'idle') {
+      return 'engaging';
+    }
+
+    if (
+      this.config.multiEnemy.enabled &&
+      phase !== 'retreating' &&
+      phase !== 'eating' &&
+      phase !== 'pearling'
+    ) {
+      const threats = this.targetSelector.getNearbyThreats(this.bot, this.config.generic.viewDistance);
+      const best = this.targetSelector.selectPrimary(this.bot, this.primaryTarget, threats, this.config.teammates);
+      if (best && best.id !== this.primaryTarget?.id) {
+        this.primaryTarget = best;
+        this.sword.stop();
+        return 'engaging';
+      }
+    }
+
+    if (MELEE_PHASES.has(phase) && this.primaryTarget) {
+      if (this.health.isLow && this.gap.shouldEat(this.bot, phase, snap.incomingProjectiles.length > 0)) {
+        return 'eating';
+      }
+
+      if (this.pearl.shouldThrowDefensive(this.bot)) {
+        return 'pearling';
+      }
+
+      if (
+        this.config.pearl.enabled &&
+        !snap.inRange &&
+        this.pearl.shouldThrowAggressive(this.bot, this.primaryTarget)
+      ) {
+        return 'pearling';
+      }
+
+      const dist = this.primaryTarget.position.distanceTo(this.bot.entity.position);
+      if (dist > this.config.generic.attackRange + 2 && this.config.bow.enabled) {
+        return 'bow-combat';
+      }
+    }
+
+    if (phase === 'retreating') {
+      if (!this.health.isLow) return 'engaging';
+      if (this.gap.shouldEat(this.bot, phase, false)) return 'eating';
+    }
+
+    if (phase === 'bow-combat' && this.primaryTarget) {
+      const dist = this.primaryTarget.position.distanceTo(this.bot.entity.position);
+      if (dist <= this.config.generic.attackRange + 1) return 'engaging';
+    }
+
+    if (this.primaryTarget && snap.inRange && snap.comboActive && phase === 'engaging') {
+      return 'combo';
+    }
+
+    if (this.primaryTarget && !snap.inRange && phase === 'combo') {
+      return 'engaging';
+    }
+
+    if (snap.ticksSinceHurt <= 3 && phase === 'combo') {
+      return 'stunned';
+    }
+
+    if (snap.ticksSinceHurt > 10 && phase === 'stunned') {
+      return 'combo';
+    }
+
+    return null;
+  }
+
+  private applyTransition(next: CombatPhase): void {
+    if (this.phase === next) return;
+    this.onExit(this.phase);
+    this.phase = next;
+    this.emit('phaseChanged', next);
+    this.onEnter(next);
+  }
+
+  private onExit(phase: CombatPhase): void {
+    if (phase === 'bow-combat') {
+      this.projectile.stop();
+    }
+  }
+
+  private onEnter(phase: CombatPhase): void {
+    switch (phase) {
+      case 'eating':
+        void this.gap.eat(this.bot);
+        break;
+      case 'pearling':
+        void this.startPearl();
+        break;
+      case 'dodging': {
+        const proj = this.incomingProjectiles[0];
+        if (proj) void this.dodge.handleIncoming(this.bot, proj);
+        break;
+      }
+      case 'retreating':
+        this.sword.stop();
+        break;
+    }
   }
 
   private tickIdle(): void {
-    if (this.config.multiEnemy.enabled) {
-      const threats = this.targetSelector.getNearbyThreats(this.bot, this.config.generic.viewDistance);
-      if (threats.length > 0 && !this.manualTarget) return;
-    }
+    if (this.manualTarget) return;
 
     if (this.config.multiEnemy.assistTeammates) {
       const struggling = this.team.getStruggling();
-      if (struggling.length > 0) {
-        const first = struggling[0];
-        if (first?.nearestEnemy) {
-          this.primaryTarget = first.nearestEnemy;
-          this.transition('engaging');
-          return;
-        }
+      const first = struggling[0];
+      if (first?.nearestEnemy) {
+        this.primaryTarget = first.nearestEnemy;
       }
     }
   }
 
   private tickMelee(): void {
-    if (!this.primaryTarget) {
-      this.transition('idle');
-      return;
-    }
-
-    const snap = this.snapshot;
-    const isLow = this.health.isLow;
-
-    if (isLow && this.gap.shouldEat(this.bot, this.phase, snap.incomingProjectiles.length > 0)) {
-      this.transition('eating');
-      void this.doEat();
-      return;
-    }
-
-    if (this.pearl.shouldThrowDefensive(this.bot)) {
-      this.transition('pearling');
-      void this.pearl.throwDefensive(this.bot, this.getActiveEnemies());
-      return;
-    }
-
-    const aggPearl =
-      this.config.pearl.enabled && !snap.inRange && this.pearl.shouldThrowAggressive(this.bot, this.primaryTarget);
-    if (aggPearl) {
-      this.transition('pearling');
-      void this.pearl.throwAggressive(this.bot, this.primaryTarget);
-      return;
-    }
-
-    const dist = this.primaryTarget.position.distanceTo(this.bot.entity.position);
-    const inMeleeRange = dist <= this.config.generic.attackRange + 2;
-
-    if (!inMeleeRange && this.config.bow.enabled) {
-      if (this.phase !== 'bow-combat') this.transition('bow-combat');
-      return;
-    }
-
-    if (inMeleeRange && this.phase === 'bow-combat') {
-      this.projectile.stop();
-      this.transition('engaging');
-    }
-
+    if (!this.primaryTarget) return;
     if (!this.sword.target || this.sword.target.id !== this.primaryTarget.id) {
       void this.sword.engage(this.primaryTarget);
     }
   }
 
   private tickBowCombat(): void {
-    if (!this.primaryTarget) {
-      this.transition('idle');
-      return;
-    }
-    const dist = this.primaryTarget.position.distanceTo(this.bot.entity.position);
-    if (dist <= this.config.generic.attackRange + 1) {
-      this.projectile.stop();
-      this.transition('engaging');
-      return;
-    }
+    if (!this.primaryTarget) return;
     if (!this.projectile.isActive) {
       void this.projectile.engage(this.primaryTarget);
     }
   }
 
   private tickRetreating(): void {
-    this.sword.stop();
     this.bot.setControlState('sprint', true);
-
-    if (!this.health.isLow) {
-      this.transition('engaging');
-      return;
-    }
-
-    if (this.gap.shouldEat(this.bot, this.phase, false)) {
-      this.transition('eating');
-      void this.doEat();
-    }
   }
 
-  private checkTransitions(): void {
-    const snap = this.snapshot;
+  private async startPearl(): Promise<void> {
+    if (!this.primaryTarget) return;
 
-    if (this.incomingProjectiles.length > 0 && this.phase !== 'dodging') {
-      const incoming = this.incomingProjectiles[0];
-      if (incoming && incoming.estimatedImpactTick - this.tick <= 4) {
-        this.transition('dodging');
-        void this.dodge.handleIncoming(this.bot, incoming);
-        return;
-      }
+    if (this.pearl.shouldThrowDefensive(this.bot)) {
+      void this.pearl.throwDefensive(this.bot, this.getActiveEnemies());
+    } else {
+      void this.pearl.throwAggressive(this.bot, this.primaryTarget);
     }
-
-    if (this.phase === 'dodging' && this.incomingProjectiles.length === 0) {
-      this.transition(this.primaryTarget ? 'engaging' : 'idle');
-      return;
-    }
-
-    if (this.phase === 'pearling' && !this.pearl.isThrowing) {
-      this.transition(this.primaryTarget ? 'engaging' : 'idle');
-      return;
-    }
-
-    if (this.phase === 'eating' && !this.gap.isEating) {
-      this.transition(this.primaryTarget ? 'engaging' : 'idle');
-      return;
-    }
-
-    if (this.health.isCritical && this.phase !== 'retreating' && this.phase !== 'eating') {
-      this.transition('retreating');
-      return;
-    }
-
-    if (!this.primaryTarget && this.phase !== 'idle') {
-      this.transition('idle');
-      return;
-    }
-
-    if (this.primaryTarget && snap.inRange && snap.comboActive && this.phase === 'engaging') {
-      this.transition('combo');
-      return;
-    }
-
-    if (this.primaryTarget && !snap.inRange && this.phase === 'combo') {
-      this.transition('engaging');
-      return;
-    }
-
-    if (snap.ticksSinceHurt <= 3 && this.phase === 'combo') {
-      this.transition('stunned');
-      return;
-    }
-
-    if (snap.ticksSinceHurt > 10 && this.phase === 'stunned') {
-      this.transition('combo');
-      return;
-    }
-
-    if (this.config.multiEnemy.enabled && this.phase !== 'retreating' && this.phase !== 'eating') {
-      const threats = this.targetSelector.getNearbyThreats(this.bot, this.config.generic.viewDistance);
-      const best = this.targetSelector.selectPrimary(this.bot, this.primaryTarget, threats, this.config.teammates);
-      if (best && best.id !== this.primaryTarget?.id) {
-        this.primaryTarget = best;
-        this.sword.stop();
-        this.transition('engaging');
-      }
-    }
-  }
-
-  private async doEat(): Promise<void> {
-    await this.gap.eat(this.bot);
   }
 
   private scanProjectiles(): void {
@@ -345,13 +357,7 @@ export class StateMachine extends EventEmitter {
     if (this.primaryTarget?.id === entity.id) {
       this.primaryTarget = undefined;
       this.sword.stop();
-      this.transition('idle');
+      this.applyTransition('idle');
     }
   };
-
-  private transition(next: CombatPhase): void {
-    if (this.phase === next) return;
-    this.phase = next;
-    this.emit('phaseChanged', next);
-  }
 }

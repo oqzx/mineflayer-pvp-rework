@@ -17,6 +17,7 @@ import {
   overshootAngle,
   humanizedCps,
 } from '../util/humanizer.js';
+import { FittsAimTracker } from '../util/fitts-aim.js';
 import { CpsController } from './cps-controller.js';
 import { ComboTracker } from './combo-tracker.js';
 import { StrafeController } from '../movement/strafe-controller.js';
@@ -30,6 +31,7 @@ import { SessionMemory } from '../adaptation/session-memory.js';
 import { StyleAdapter } from '../adaptation/style-adapter.js';
 import type { CombatStrategy } from '../adaptation/style-adapter.js';
 import { DecisionEngine } from '../engine/decision-engine.js';
+import type { IDecisionAgent } from '../engine/agent-interface.js';
 import { PredictionLayer } from '../engine/prediction-layer.js';
 import type { PredictionFrame } from '../engine/prediction-layer.js';
 import { BehaviorBlend } from '../engine/behavior-blend.js';
@@ -93,15 +95,15 @@ class FollowGoal extends goals.Goal {
 export class SwordCombat extends EventEmitter {
   public target: Entity | undefined = undefined;
   public lastTarget: Entity | undefined = undefined;
-  public wasInRange: boolean = false;
-  public wasVisible: boolean = false;
-  public ticksToNextAttack: number = 0;
-  public ticksSinceTargetAttack: number = 0;
-  public ticksSinceLastHurt: number = 0;
-  public ticksSinceLastTargetHit: number = 0;
-  public ticksSinceLastSwitch: number = 0;
-  public ticksSinceLastTargetHurt: number = 999;
-  public weaponOfChoice: string = 'sword';
+  public wasInRange = false;
+  public wasVisible = false;
+  public ticksToNextAttack = 0;
+  public ticksSinceTargetAttack = 0;
+  public ticksSinceLastHurt = 0;
+  public ticksSinceLastTargetHit = 0;
+  public ticksSinceLastSwitch = 0;
+  public ticksSinceLastTargetHurt = 999;
+  public weaponOfChoice = 'sword';
 
   private readonly cps: CpsController;
   private readonly combo: ComboTracker;
@@ -114,23 +116,24 @@ export class SwordCombat extends EventEmitter {
   private readonly height: HeightAdvantage;
   private readonly memory: SessionMemory;
   private readonly adapter: StyleAdapter;
-  private readonly decisionEngine: DecisionEngine;
+  private readonly decisionEngine: IDecisionAgent;
   private readonly predictionLayer: PredictionLayer;
   private readonly behaviorBlend: BehaviorBlend;
   private readonly fatigueManager: FatigueManager;
+  private readonly fittsTracker: FittsAimTracker;
 
-  private willBeFirstHit: boolean = true;
+  private willBeFirstHit = true;
   private followGoal: FollowGoal | undefined = undefined;
-  private lastHealth: number = 20;
-  private previousPos: Vec3 = new Vec3(0, 0, 0);
-  private currentTick: number = 0;
-  private lookAwayTicksLeft: number = 0;
-  private overshootRecovering: boolean = false;
-  private kbCounterTicksLeft: number = 0;
+  private lastHealth = 20;
+  private currentTick = 0;
+  private lookAwayTicksLeft = 0;
+  private overshootRecovering = false;
+  private kbCounterTicksLeft = 0;
 
   constructor(
     public readonly bot: Bot,
     public readonly config: FullConfig,
+    agent?: IDecisionAgent,
   ) {
     super();
     this.cps = new CpsController(config.cps);
@@ -144,10 +147,11 @@ export class SwordCombat extends EventEmitter {
     this.height = new HeightAdvantage();
     this.memory = new SessionMemory();
     this.adapter = new StyleAdapter(config.adaptation);
-    this.decisionEngine = new DecisionEngine(config.decisionEngine);
+    this.decisionEngine = agent ?? new DecisionEngine(config.decisionEngine);
     this.predictionLayer = new PredictionLayer(config.prediction);
     this.behaviorBlend = new BehaviorBlend(config.behaviorBlend);
     this.fatigueManager = new FatigueManager(config.fatigue);
+    this.fittsTracker = new FittsAimTracker();
 
     this.bot.on('physicsTick', this.onTick);
     this.bot.on('entitySwingArm', this.onTargetSwing);
@@ -165,7 +169,7 @@ export class SwordCombat extends EventEmitter {
     this.ticksSinceLastTargetHurt = 999;
     this.willBeFirstHit = true;
     this.kbCounterTicksLeft = 0;
-    this.previousPos = this.bot.entity.position.clone();
+    this.fittsTracker.reset();
     this.bot.tracker.trackEntity(target);
     this.bot.tracker.trackEntity(this.bot.entity);
     const weapon = this.findWeapon();
@@ -181,6 +185,7 @@ export class SwordCombat extends EventEmitter {
     this.lastTarget = this.target;
     this.target = undefined;
     this.kbCounterTicksLeft = 0;
+    this.fittsTracker.reset();
     this.combo.reset();
     this.strafe.clearDir(this.bot);
     this.stopFollow();
@@ -362,7 +367,7 @@ export class SwordCombat extends EventEmitter {
 
     const retreatDriven = blend.retreatWeight > 0.5;
     let shouldApproach = !isLow || !this.config.lowHealth.preferBlockOverAttack;
-    if (this.onHitEnabled && this.ticksSinceLastHurt < 5 && this.kbCounterTicksLeft === 0) shouldApproach = false;
+    if (this.ticksSinceLastHurt < 5 && this.kbCounterTicksLeft === 0) shouldApproach = false;
     if (this.combo.state === 'combo' && !strategy.prioritiseKb) shouldApproach = true;
     if (retreatDriven) shouldApproach = false;
 
@@ -377,10 +382,6 @@ export class SwordCombat extends EventEmitter {
       this.bot.setControlState('forward', shouldApproach);
       this.bot.setControlState('sprint', shouldApproach);
     }
-  }
-
-  private get onHitEnabled(): boolean {
-    return true;
   }
 
   private doStrafe(strategy: CombatStrategy, blend: BlendWeights, fatigueMultiplier: number): void {
@@ -433,7 +434,7 @@ export class SwordCombat extends EventEmitter {
     const eyePos = this.bot.entity.position.offset(0, this.bot.entity.height * 0.9, 0);
     const eyeDir = this.bot.util.getViewDir();
     const reach = this.config.generic.attackRange;
-    const hit = this.bot.util.raytrace.entityRaytrace(eyePos, eyeDir, reach, (e) => e.id === this.target?.id);
+    const hit = this.bot.util.raytrace.entityRaytrace(eyePos, eyeDir, reach, (e: Entity) => e.id === this.target?.id);
     if (hit === this.target) {
       this.wasVisible = true;
       return;
@@ -441,7 +442,7 @@ export class SwordCombat extends EventEmitter {
 
     const feet = this.target.position.offset(0, 0.1, 0);
     const dirToFeet = feet.minus(eyePos).normalize();
-    const hitFeet = this.bot.util.raytrace.entityRaytrace(eyePos, dirToFeet, reach, (e) => e.id === this.target?.id);
+    const hitFeet = this.bot.util.raytrace.entityRaytrace(eyePos, dirToFeet, reach, (e: Entity) => e.id === this.target?.id);
     this.wasVisible = hitFeet === this.target;
   }
 
@@ -463,16 +464,35 @@ export class SwordCombat extends EventEmitter {
       return;
     }
 
-    const useLeadAim = rotateCfg.mode === 'constant' || this.ticksToNextAttack <= 0;
-    const aimBase = useLeadAim ? predFrame.predictedPosition : this.target.position;
-    const verticalOffset = eyeHeightJitter(this.target.height * 0.5, humanCfg.eyeHeightVarianceFactor);
-
     const botEye = this.bot.entity.position.offset(0, this.bot.entity.height * 0.9, 0);
-    const aimTarget = aimBase.offset(0, verticalOffset, 0);
 
-    const dx = aimTarget.x - botEye.x;
-    const dy = aimTarget.y - botEye.y;
-    const dz = aimTarget.z - botEye.z;
+    const fittsPoint = this.fittsTracker.computeAimPoint(
+      botEye,
+      this.bot.entity.yaw,
+      this.target,
+      rotateCfg.fittsBias,
+    );
+
+    const useLeadAim = rotateCfg.mode === 'constant' || this.ticksToNextAttack <= 0;
+    const leadPos = predFrame.predictedPosition;
+
+    const aimTarget = useLeadAim
+      ? new Vec3(
+          leadPos.x * 0.65 + fittsPoint.x * 0.35,
+          fittsPoint.y,
+          leadPos.z * 0.65 + fittsPoint.z * 0.35,
+        )
+      : fittsPoint;
+
+    const aimWithVerticalJitter = aimTarget.offset(
+      0,
+      eyeHeightJitter(0, humanCfg.eyeHeightVarianceFactor),
+      0,
+    );
+
+    const dx = aimWithVerticalJitter.x - botEye.x;
+    const dy = aimWithVerticalJitter.y - botEye.y;
+    const dz = aimWithVerticalJitter.z - botEye.z;
     const groundDist = Math.sqrt(dx * dx + dz * dz);
 
     let targetYaw = Math.atan2(-dx, -dz);
@@ -516,8 +536,7 @@ export class SwordCombat extends EventEmitter {
     if (!this.config.generic.hitThroughWalls && !this.wasVisible) return false;
     if (!this.bot.supportFeature('doesntHaveOffHandSlot') && this.ticksToNextAttack > -1) return false;
 
-    const ticks = this.ticksSinceLastTargetHurt;
-    const iframeProbability = this.computeIframeProbability(ticks);
+    const iframeProbability = this.computeIframeProbability(this.ticksSinceLastTargetHurt);
     if (!shouldTrigger(iframeProbability)) return false;
 
     const chargeCheck = this.computeChargeProbability(this.ticksToNextAttack);
@@ -525,23 +544,18 @@ export class SwordCombat extends EventEmitter {
 
     const hitChanceBonus = predFrame.hitChanceEstimate > 0.5 ? 0.2 : 0;
     const exposureBonus = predFrame.exposureScore > 0.6 ? 0.15 : 0;
-    const finalCheck = 0.6 + hitChanceBonus + exposureBonus;
-
-    return shouldTrigger(Math.min(1, finalCheck));
+    return shouldTrigger(Math.min(1, 0.6 + hitChanceBonus + exposureBonus));
   }
 
   private computeIframeProbability(ticksSinceHurt: number): number {
     if (ticksSinceHurt <= 0) return 0;
-    const center = 8;
-    const steepness = 0.9;
-    return 1 / (1 + Math.exp(-steepness * (ticksSinceHurt - center)));
+    return 1 / (1 + Math.exp(-0.9 * (ticksSinceHurt - 8)));
   }
 
   private computeChargeProbability(ticksToNext: number): number {
     if (ticksToNext > 2) return 0.05;
     if (ticksToNext > 0) return 0.3;
-    const fullChargeTick = -1;
-    const offset = ticksToNext - fullChargeTick;
+    const offset = ticksToNext - (-1);
     return 1 / (1 + Math.exp(-1.8 * (offset + 1)));
   }
 
@@ -631,7 +645,7 @@ export class SwordCombat extends EventEmitter {
     const target = name ?? this.weaponOfChoice;
     const held = this.bot.inventory.slots[this.bot.getEquipmentDestSlot('hand')];
     if (held?.name.includes(target)) return held;
-    return this.bot.util.inv.getAllItems().find((i) => i?.name.includes(target)) ?? null;
+    return this.bot.util.inv.getAllItems().find((i: Item | null) => i?.name.includes(target)) ?? null;
   }
 
   async equip(weapon: Item): Promise<boolean> {
@@ -687,17 +701,11 @@ export class SwordCombat extends EventEmitter {
       this.ticksSinceLastTargetHit = 0;
     }
 
-    if (this.kbCancelEnabled && this.target) {
-      this.kbCounterTicksLeft = 3;
-    }
+    this.kbCounterTicksLeft = 3;
 
     if (this.target) {
       const wasAggressive = this.ticksSinceTargetAttack < 8;
       this.memory.recordPostHitBehavior(this.target.id, wasAggressive);
     }
   };
-
-  private get kbCancelEnabled(): boolean {
-    return true;
-  }
 }

@@ -47,6 +47,7 @@ export const defaultConfig: FullConfig = {
     overshootEnabled: true,
     overshootAmplitude: 0.022,
     overshootRecoveryFactor: 0.55,
+    fittsBias: 0.5,
   },
   critical: {
     enabled: true,

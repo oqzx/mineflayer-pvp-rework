@@ -4,6 +4,19 @@ import type { Entity } from 'prismarine-entity';
 const JUMP_THRESHOLD = 0.4;
 const JUMP_BOOST_THRESHOLD = 1.2;
 
+type BotWithRegistry = Bot & {
+  registry?: { effectsByName?: Record<string, { id: number }> };
+};
+
+function resolveJumpBoostEffectId(bot: Bot): number {
+  const registry = (bot as BotWithRegistry).registry;
+  return (
+    registry?.effectsByName?.['jump_boost']?.id ??
+    registry?.effectsByName?.['Jump Boost']?.id ??
+    8
+  );
+}
+
 export class HeightAdvantage {
   seek(bot: Bot, target: Entity, enabled: boolean): void {
     if (!enabled || !bot.entity.onGround) return;
@@ -14,11 +27,13 @@ export class HeightAdvantage {
   }
 
   hasJumpBoost(bot: Bot): boolean {
-    return bot.entity.effects[8] !== undefined;
+    const id = resolveJumpBoostEffectId(bot);
+    return bot.entity.effects[id] !== undefined;
   }
 
   getJumpBoostLevel(bot: Bot): number {
-    return (bot.entity.effects[8]?.amplifier ?? -1) + 1;
+    const id = resolveJumpBoostEffectId(bot);
+    return (bot.entity.effects[id]?.amplifier ?? -1) + 1;
   }
 
   shouldUseJumpBoostPotion(bot: Bot, _situation: 'height' | 'escape' | 'tower'): boolean {

@@ -18,7 +18,7 @@ export class PotionHandler {
   }
 
   findJumpBoostPotion(bot: Bot): Item | undefined {
-    return bot.inventory.items().find((i) => {
+    return bot.inventory.items().find((i: Item) => {
       if (i.name !== 'potion') return false;
       const nbt = i.nbt as unknown as { value?: { Potion?: { value?: string } } } | null;
       return nbt?.value?.Potion?.value?.includes('leaping') === true;

@@ -3,6 +3,9 @@ import type { EnemyProfile } from '../adaptation/session-memory.js';
 import type { CombatStrategy } from '../adaptation/style-adapter.js';
 import type { PredictionFrame } from './prediction-layer.js';
 import type { DecisionEngineConfig } from '../config/types.js';
+import type { IDecisionAgent } from './agent-interface.js';
+
+export type { IDecisionAgent };
 
 export type ActionScore = {
   attack: number;
@@ -31,7 +34,7 @@ function sigmoid(x: number): number {
   return 1 / (1 + Math.exp(-x));
 }
 
-export class DecisionEngine {
+export class DecisionEngine implements IDecisionAgent {
   private lastFrame: DecisionFrame | null = null;
 
   constructor(private readonly config: DecisionEngineConfig) {}
@@ -72,54 +75,66 @@ export class DecisionEngine {
     const inRange = snap.inRange;
     const cooldownRatio = Math.max(0, snap.ticksToNextAttack / 10);
 
-    const attackBase = inRange ? 0.85 : 0.05;
-    const attackCooldownPenalty = cooldownRatio * 0.55;
-    const attackHitBonus = pred.hitChanceEstimate * 0.3;
-    const attackWindowBonus = pred.isComboWindowOpen ? 0.15 : 0;
-    const attackExposureBonus = pred.exposureScore * 0.2;
-    const attackAggressionBonus = this.config.aggressionBias * 0.2;
-    const attackLowHealthPenalty = isLowHealth ? 0.3 : 0;
     const attack = clamp(
-      attackBase -
-        attackCooldownPenalty +
-        attackHitBonus +
-        attackWindowBonus +
-        attackExposureBonus +
-        attackAggressionBonus -
-        attackLowHealthPenalty,
-      0,
-      1,
+      (inRange ? 0.85 : 0.05)
+        - cooldownRatio * 0.55
+        + pred.hitChanceEstimate * 0.3
+        + (pred.isComboWindowOpen ? 0.15 : 0)
+        + pred.exposureScore * 0.2
+        + this.config.aggressionBias * 0.2
+        - (isLowHealth ? 0.3 : 0),
+      0, 1,
     );
 
-    const retreatLowHealth = isLowHealth ? 0.5 + this.config.defensiveBias * 0.4 : 0;
-    const retreatIncoming = snap.incomingProjectiles.length > 0 ? 0.35 : 0;
-    const retreatThreatBonus = snap.threatLevel === 'critical' ? 0.4 : snap.threatLevel === 'high' ? 0.2 : 0;
-    const retreatFleeing = pred.isFleeingLikely ? 0.2 : 0;
-    const retreat = clamp(retreatLowHealth + retreatIncoming + retreatThreatBonus + retreatFleeing, 0, 1);
+    const retreat = clamp(
+      (isLowHealth ? 0.5 + this.config.defensiveBias * 0.4 : 0)
+        + (snap.incomingProjectiles.length > 0 ? 0.35 : 0)
+        + (snap.threatLevel === 'critical' ? 0.4 : snap.threatLevel === 'high' ? 0.2 : 0)
+        + (pred.isFleeingLikely ? 0.2 : 0),
+      0, 1,
+    );
 
+    const strafePenalty = retreat * 0.4;
     const counterDir = strategy.counterStrafeDir;
-    const leftPredBase = pred.strafeDirectionProbability.right > 0.5 ? 0.65 : 0.3;
-    const rightPredBase = pred.strafeDirectionProbability.left > 0.5 ? 0.65 : 0.3;
-    const strafeLeftForced = counterDir === 'left' ? 0.25 : 0;
-    const strafeRightForced = counterDir === 'right' ? 0.25 : 0;
-    const strafePenaltyRetreat = retreat * 0.4;
-    const strafeLeft = inRange ? clamp(leftPredBase + strafeLeftForced - strafePenaltyRetreat, 0, 1) : 0.05;
-    const strafeRight = inRange ? clamp(rightPredBase + strafeRightForced - strafePenaltyRetreat, 0, 1) : 0.05;
+    const strafeLeft = inRange
+      ? clamp(
+          (pred.strafeDirectionProbability.right > 0.5 ? 0.65 : 0.3)
+            + (counterDir === 'left' ? 0.25 : 0)
+            - strafePenalty,
+          0, 1,
+        )
+      : 0.05;
+    const strafeRight = inRange
+      ? clamp(
+          (pred.strafeDirectionProbability.left > 0.5 ? 0.65 : 0.3)
+            + (counterDir === 'right' ? 0.25 : 0)
+            - strafePenalty,
+          0, 1,
+        )
+      : 0.05;
 
-    const blockIncoming = snap.incomingProjectiles.length > 0 ? 0.8 : 0;
-    const blockProfile = profile.blockingRatio > 0.4 ? 0.15 : 0;
-    const blockLowHealth = isLowHealth ? 0.25 : 0;
-    const block = clamp(blockIncoming + blockProfile + blockLowHealth, 0, 1);
+    const block = clamp(
+      (snap.incomingProjectiles.length > 0 ? 0.8 : 0)
+        + (profile.blockingRatio > 0.4 ? 0.15 : 0)
+        + (isLowHealth ? 0.25 : 0),
+      0, 1,
+    );
 
-    const critWindowBonus = pred.criticalWindowOpen ? 0.6 : 0;
-    const critFallingBonus = snap.verticalVelocity < -0.25 ? 0.5 : 0;
-    const critGroundPenalty = snap.isOnGround ? -0.1 : 0.3;
-    const criticalSetup = inRange ? clamp(critWindowBonus + critFallingBonus + critGroundPenalty, 0, 1) : 0;
+    const criticalSetup = inRange
+      ? clamp(
+          (pred.criticalWindowOpen ? 0.6 : 0)
+            + (snap.verticalVelocity < -0.25 ? 0.5 : 0)
+            + (snap.isOnGround ? -0.1 : 0.3),
+          0, 1,
+        )
+      : 0;
 
-    const wTapComboBonus = snap.comboActive ? 0.55 : 0.15;
-    const wTapKbPriority = strategy.prioritiseKb ? 0.3 : 0;
-    const wTapProfileBonus = profile.aggressionScore > 0.6 ? 0.1 : 0;
-    const wTap = clamp(wTapComboBonus + wTapKbPriority + wTapProfileBonus, 0, 1);
+    const wTap = clamp(
+      (snap.comboActive ? 0.55 : 0.15)
+        + (strategy.prioritiseKb ? 0.3 : 0)
+        + (profile.aggressionScore > 0.6 ? 0.1 : 0),
+      0, 1,
+    );
 
     const track = inRange ? 0.95 : 0.6;
 
@@ -154,20 +169,14 @@ export class DecisionEngine {
     strategy: CombatStrategy,
     pred: PredictionFrame,
   ): number {
-    const healthFactor = clamp(snap.botHealth / 20, 0, 1);
-    const comboPressure = snap.comboActive ? 0.2 : 0;
-    const profileAggression = strategy.aggressionLevel;
-    const hitChanceFactor = pred.hitChanceEstimate * 0.3;
-    const predictionFactor = pred.exposureScore * 0.2;
-    const staggerBonus = profile.staggerFrequency > 0.5 ? 0.1 : 0;
     const raw =
-      healthFactor * 0.3 +
-      profileAggression * 0.25 +
-      comboPressure +
-      hitChanceFactor +
-      predictionFactor +
-      staggerBonus +
-      this.config.aggressionBias * 0.15;
+      clamp(snap.botHealth / 20, 0, 1) * 0.3
+        + strategy.aggressionLevel * 0.25
+        + (snap.comboActive ? 0.2 : 0)
+        + pred.hitChanceEstimate * 0.3
+        + pred.exposureScore * 0.2
+        + (profile.staggerFrequency > 0.5 ? 0.1 : 0)
+        + this.config.aggressionBias * 0.15;
     return clamp(sigmoid((raw - 0.5) * 6), 0, 1);
   }
 

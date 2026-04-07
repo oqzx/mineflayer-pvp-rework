@@ -51,6 +51,7 @@ export type RotateConfig = {
   overshootEnabled: boolean;
   overshootAmplitude: number;
   overshootRecoveryFactor: number;
+  fittsBias: number;
 };
 
 export type CriticalConfig = {

@@ -7,7 +7,16 @@ import type { Entity } from 'prismarine-entity';
 import { StateMachine } from './core/state-machine.js';
 import { defaultConfig } from './config/defaults.js';
 import type { FullConfig } from './config/types.js';
+import type { IDecisionAgent } from './engine/agent-interface.js';
 import 'mineflayer-pathfinder';
+
+export type { IDecisionAgent } from './engine/agent-interface.js';
+export type { AgentFactory } from './engine/agent-interface.js';
+export type { DecisionFrame, ActionScore } from './engine/decision-engine.js';
+
+export type AgentOverrides = {
+  decision?: IDecisionAgent;
+};
 
 declare module 'mineflayer' {
   interface Bot {
@@ -27,8 +36,9 @@ export class PvpController {
   constructor(
     private readonly bot: Bot,
     config: FullConfig,
+    agents?: AgentOverrides,
   ) {
-    this.stateMachine = new StateMachine(bot, config);
+    this.stateMachine = new StateMachine(bot, config, agents);
     this.stateMachine.on('attackedTarget', (t: Entity) => bot.emit('attackedTarget', t));
     this.stateMachine.on('startedAttacking', (t: Entity) => bot.emit('startedAttacking', t));
     this.stateMachine.on('stoppedAttacking', () => bot.emit('stoppedAttacking'));
@@ -52,13 +62,17 @@ export class PvpController {
   }
 }
 
-export default function plugin(bot: Bot, config: Partial<FullConfig> = {}): void {
+export default function plugin(
+  bot: Bot,
+  config: Partial<FullConfig> = {},
+  agents?: AgentOverrides,
+): void {
   if (!bot.util) bot.loadPlugin(utilPlugin);
   if (!bot.tracker || !bot.projectiles) bot.loadPlugin(trackerPlugin);
   if (!bot.smoothLook) bot.loadPlugin(lookPlugin);
   if (!(bot as Bot & { pathfinder?: unknown }).pathfinder) bot.loadPlugin(pathfinderPlugin);
   const merged: FullConfig = { ...defaultConfig, ...config };
-  bot.pvp = new PvpController(bot, merged);
+  bot.pvp = new PvpController(bot, merged, agents);
 }
 
 export { defaultConfig } from './config/defaults.js';
