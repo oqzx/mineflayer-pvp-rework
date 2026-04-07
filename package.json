@@ -39,9 +39,7 @@
     "mineflayer-pathfinder": "^2.4.5"
   },
   "devDependencies": {
-    "@nxg-org/mineflayer-custom-pvp": "file:.",
-    "@typescript-eslint/eslint-plugin": "^7.0.0",
-    "@typescript-eslint/parser": "^7.0.0",
+    "typescript-eslint": "^7.0.0",
     "eslint": "^8.57.0",
     "eslint-config-prettier": "^9.1.0",
     "mineflayer": "^4.18.0",
