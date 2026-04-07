@@ -5,7 +5,7 @@ import { Item } from "prismarine-item";
 import { EventEmitter } from "stream";
 import { Vec3 } from "vec3";
 import { getTargetYaw, lookingAt, movingAt } from "../calc/math";
-import { attack } from "../util";
+import { performAttack as attack } from "../util";
 import { defaultConfig, FullConfig, getConfig } from "./swordconfigs";
 import { MaxDamageOffset, NewPVPTicks, OldPVPTicks } from "./swordutil";
 import { followEntity, stopFollow } from "./swordutil";
@@ -194,7 +194,8 @@ export class SwordPvp extends EventEmitter {
           return;
 
         case "jump":
-        case "jumpshift":
+        case "jumpshift": {
+          const cancelMode = this.options.onHitConfig.kbCancel.mode;
           if (lookingAt(entity, this.target!, this.options.genericConfig.enemyReach)) {
             this.bot.setControlState("right", false);
             this.bot.setControlState("left", false);
@@ -205,7 +206,14 @@ export class SwordPvp extends EventEmitter {
             this.bot.setControlState("jump", true);
             this.bot.setControlState("jump", false);
           }
-          if (this.options.onHitConfig.kbCancel.mode === "jump") break;
+          if (cancelMode === "jumpshift" && lookingAt(entity, this.target!, this.options.genericConfig.enemyReach)) {
+            this.bot.setControlState("sneak", true);
+            await this.bot.waitForTicks((this.options.onHitConfig.kbCancel as any).delay || 5);
+            this.bot.setControlState("sneak", false);
+            this.bot.setControlState("sprint", true);
+          }
+          break;
+        }
         case "shift":
           if (lookingAt(entity, this.target!, this.options.genericConfig.enemyReach)) {
             this.bot.setControlState("sneak", true);
