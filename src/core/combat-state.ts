@@ -1,5 +1,5 @@
-import type { Entity } from 'prismarine-entity';
-import type { Vec3 } from 'vec3';
+import type { Entity } from 'prismarine-entity'
+import type { Vec3 } from 'vec3'
 
 export type CombatPhase =
   | 'idle'
@@ -13,37 +13,37 @@ export type CombatPhase =
   | 'eating'
   | 'pearling'
   | 'bow-combat'
-  | 'dodging';
+  | 'dodging'
 
-export type ThreatLevel = 'none' | 'low' | 'medium' | 'high' | 'critical';
+export type ThreatLevel = 'none' | 'low' | 'medium' | 'high' | 'critical'
 
 export type IncomingProjectile = {
-  entity: Entity;
-  type: 'arrow' | 'fireball' | 'pearl' | 'other';
-  estimatedImpactTick: number;
-  impactPosition: Vec3;
-};
+  entity: Entity
+  type: 'arrow' | 'fireball' | 'pearl' | 'other'
+  estimatedImpactTick: number
+  impactPosition: Vec3
+}
 
 export type CombatSnapshot = {
-  phase: CombatPhase;
-  target: Entity | undefined;
-  targets: Entity[];
-  threatLevel: ThreatLevel;
-  incomingProjectiles: IncomingProjectile[];
-  tick: number;
-  botHealth: number;
-  targetHealth: number | undefined;
-  inRange: boolean;
-  visible: boolean;
-  comboActive: boolean;
-  ticksSinceHurt: number;
-  ticksSinceTargetHurt: number;
-  ticksSinceLastHit: number;
-  ticksToNextAttack: number;
-  isOnGround: boolean;
-  verticalVelocity: number;
-  predictedTargetPosition: Vec3 | undefined;
-};
+  phase: CombatPhase
+  target: Entity | undefined
+  targets: Entity[]
+  threatLevel: ThreatLevel
+  incomingProjectiles: IncomingProjectile[]
+  tick: number
+  botHealth: number
+  targetHealth: number | undefined
+  inRange: boolean
+  visible: boolean
+  comboActive: boolean
+  ticksSinceHurt: number
+  ticksSinceTargetHurt: number
+  ticksSinceLastHit: number
+  ticksToNextAttack: number
+  isOnGround: boolean
+  verticalVelocity: number
+  predictedTargetPosition: Vec3 | undefined
+}
 
 export function createSnapshot(): CombatSnapshot {
   return {
@@ -65,5 +65,5 @@ export function createSnapshot(): CombatSnapshot {
     isOnGround: true,
     verticalVelocity: 0,
     predictedTargetPosition: undefined,
-  };
+  }
 }

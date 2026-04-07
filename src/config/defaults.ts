@@ -1,4 +1,4 @@
-import type { FullConfig } from './types.js';
+import type { FullConfig } from './types.js'
 
 export const defaultConfig: FullConfig = {
   generic: {
@@ -173,4 +173,4 @@ export const defaultConfig: FullConfig = {
     movementEntropyWindow: 20,
   },
   teammates: [],
-};
+}

@@ -1,12 +1,12 @@
-import { EventEmitter } from 'events';
-import { AABBUtils } from '@nxg-org/mineflayer-util-plugin';
-import type { Bot } from 'mineflayer';
-import type { Entity } from 'prismarine-entity';
-import type { Item } from 'prismarine-item';
-import { Vec3 } from 'vec3';
-import type { FullConfig } from '../config/types.js';
-import type { CombatSnapshot } from '../core/combat-state.js';
-import { performAttack } from '../util/attack.js';
+import { EventEmitter } from 'events'
+import { AABBUtils } from '@nxg-org/mineflayer-util-plugin'
+import type { Bot } from 'mineflayer'
+import type { Entity } from 'prismarine-entity'
+import type { Item } from 'prismarine-item'
+import { Vec3 } from 'vec3'
+import type { FullConfig } from '../config/types.js'
+import type { CombatSnapshot } from '../core/combat-state.js'
+import { performAttack } from '../util/attack.js'
 import {
   humanDelay,
   shouldTrigger,
@@ -15,41 +15,41 @@ import {
   focusLapseCheck,
   overshootAngle,
   humanizedCps,
-} from '../util/humanizer.js';
-import { FittsAimTracker } from '../util/fitts-aim.js';
-import { CpsController } from './cps-controller.js';
-import { ComboTracker } from './combo-tracker.js';
-import { StrafeController } from '../movement/strafe-controller.js';
-import { WTapController } from '../movement/w-tap-controller.js';
-import { AntiTrap } from '../movement/anti-trap.js';
-import { CriticalHandler } from '../tactics/critical-handler.js';
-import { BlockHitHandler } from '../tactics/block-hit.js';
-import { ShieldManager } from '../tactics/shield-manager.js';
-import { HeightAdvantage } from '../tactics/height-advantage.js';
-import { SessionMemory } from '../adaptation/session-memory.js';
-import { StyleAdapter } from '../adaptation/style-adapter.js';
-import type { CombatStrategy } from '../adaptation/style-adapter.js';
-import { DecisionEngine } from '../engine/decision-engine.js';
-import type { IDecisionAgent } from '../engine/agent-interface.js';
-import { PredictionLayer } from '../engine/prediction-layer.js';
-import type { PredictionFrame } from '../engine/prediction-layer.js';
-import { BehaviorBlend } from '../engine/behavior-blend.js';
-import type { BlendWeights } from '../engine/behavior-blend.js';
-import { FatigueManager } from '../engine/fatigue-manager.js';
-import { goals } from 'mineflayer-pathfinder';
-import 'mineflayer-pathfinder';
+} from '../util/humanizer.js'
+import { FittsAimTracker } from '../util/fitts-aim.js'
+import { CpsController } from './cps-controller.js'
+import { ComboTracker } from './combo-tracker.js'
+import { StrafeController } from '../movement/strafe-controller.js'
+import { WTapController } from '../movement/w-tap-controller.js'
+import { AntiTrap } from '../movement/anti-trap.js'
+import { CriticalHandler } from '../tactics/critical-handler.js'
+import { BlockHitHandler } from '../tactics/block-hit.js'
+import { ShieldManager } from '../tactics/shield-manager.js'
+import { HeightAdvantage } from '../tactics/height-advantage.js'
+import { SessionMemory } from '../adaptation/session-memory.js'
+import { StyleAdapter } from '../adaptation/style-adapter.js'
+import type { CombatStrategy } from '../adaptation/style-adapter.js'
+import { DecisionEngine } from '../engine/decision-engine.js'
+import type { IDecisionAgent } from '../engine/agent-interface.js'
+import { PredictionLayer } from '../engine/prediction-layer.js'
+import type { PredictionFrame } from '../engine/prediction-layer.js'
+import { BehaviorBlend } from '../engine/behavior-blend.js'
+import type { BlendWeights } from '../engine/behavior-blend.js'
+import { FatigueManager } from '../engine/fatigue-manager.js'
+import { goals } from 'mineflayer-pathfinder'
+import 'mineflayer-pathfinder'
 
-const { getEntityAABB } = AABBUtils;
+const { getEntityAABB } = AABBUtils
 
-const PI_HALF = Math.PI / 2;
+const PI_HALF = Math.PI / 2
 
 type BotWithPathfinder = Bot & {
-  pathfinder: { setGoal(g: goals.Goal, dynamic: boolean): void; stop(): void };
-};
+  pathfinder: { setGoal(g: goals.Goal, dynamic: boolean): void; stop(): void }
+}
 
 class FollowGoal extends goals.Goal {
-  private readonly rangeSq: number;
-  private cachedPos: Vec3;
+  private readonly rangeSq: number
+  private cachedPos: Vec3
 
   constructor(
     private readonly bot: Bot,
@@ -57,151 +57,152 @@ class FollowGoal extends goals.Goal {
     range: number,
     private readonly predictTicks: number,
   ) {
-    super();
-    this.rangeSq = range * range;
-    this.cachedPos = entity.position.clone();
+    super()
+    this.rangeSq = range * range
+    this.cachedPos = entity.position.clone()
   }
 
   heuristic(n: { x: number; y: number; z: number }): number {
-    const dx = Math.abs(this.cachedPos.x - n.x);
-    const dy = Math.abs(this.cachedPos.y - n.y);
-    const dz = Math.abs(this.cachedPos.z - n.z);
-    return Math.abs(dx - dz) + Math.min(dx, dz) * Math.SQRT2 + dy;
+    const dx = Math.abs(this.cachedPos.x - n.x)
+    const dy = Math.abs(this.cachedPos.y - n.y)
+    const dz = Math.abs(this.cachedPos.z - n.z)
+    return Math.abs(dx - dz) + Math.min(dx, dz) * Math.SQRT2 + dy
   }
 
   isEnd(n: { x: number; y: number; z: number }): boolean {
-    const dx = this.cachedPos.x - n.x;
-    const dy = this.cachedPos.y - n.y;
-    const dz = this.cachedPos.z - n.z;
-    return dx * dx + dy * dy + dz * dz <= this.rangeSq;
+    const dx = this.cachedPos.x - n.x
+    const dy = this.cachedPos.y - n.y
+    const dz = this.cachedPos.z - n.z
+    return dx * dx + dy * dy + dz * dz <= this.rangeSq
   }
 
   hasChanged(): boolean {
-    type Tracker = { getEntitySpeed?: (e: Entity) => Vec3 | null };
-    const vel = (this.bot.tracker as unknown as Tracker).getEntitySpeed?.(this.entity) ?? new Vec3(0, 0, 0);
-    const predicted = this.entity.position.plus(vel.scaled(this.predictTicks));
-    const dx = predicted.x - this.cachedPos.x;
-    const dy = predicted.y - this.cachedPos.y;
-    const dz = predicted.z - this.cachedPos.z;
+    type Tracker = { getEntitySpeed?: (e: Entity) => Vec3 | null }
+    const vel =
+      (this.bot.tracker as unknown as Tracker).getEntitySpeed?.(this.entity) ?? new Vec3(0, 0, 0)
+    const predicted = this.entity.position.plus(vel.scaled(this.predictTicks))
+    const dx = predicted.x - this.cachedPos.x
+    const dy = predicted.y - this.cachedPos.y
+    const dz = predicted.z - this.cachedPos.z
     if (dx * dx + dy * dy + dz * dz > 1) {
-      this.cachedPos = predicted;
-      return true;
+      this.cachedPos = predicted
+      return true
     }
-    return false;
+    return false
   }
 }
 
 export class SwordCombat extends EventEmitter {
-  public target: Entity | undefined = undefined;
-  public lastTarget: Entity | undefined = undefined;
-  public wasInRange = false;
-  public wasVisible = false;
-  public ticksToNextAttack = 0;
-  public ticksSinceTargetAttack = 0;
-  public ticksSinceLastHurt = 0;
-  public ticksSinceLastTargetHit = 0;
-  public ticksSinceLastSwitch = 0;
-  public ticksSinceLastTargetHurt = 999;
-  public weaponOfChoice = 'sword';
+  public target: Entity | undefined = undefined
+  public lastTarget: Entity | undefined = undefined
+  public wasInRange = false
+  public wasVisible = false
+  public ticksToNextAttack = 0
+  public ticksSinceTargetAttack = 0
+  public ticksSinceLastHurt = 0
+  public ticksSinceLastTargetHit = 0
+  public ticksSinceLastSwitch = 0
+  public ticksSinceLastTargetHurt = 999
+  public weaponOfChoice = 'sword'
 
-  private readonly cps: CpsController;
-  private readonly combo: ComboTracker;
-  private readonly strafe: StrafeController;
-  private readonly wtap: WTapController;
-  private readonly antiTrap: AntiTrap;
-  private readonly crits: CriticalHandler;
-  private readonly blockHit: BlockHitHandler;
-  private readonly shield: ShieldManager;
-  private readonly height: HeightAdvantage;
-  private readonly memory: SessionMemory;
-  private readonly adapter: StyleAdapter;
-  private readonly decisionEngine: IDecisionAgent;
-  private readonly predictionLayer: PredictionLayer;
-  private readonly behaviorBlend: BehaviorBlend;
-  private readonly fatigueManager: FatigueManager;
-  private readonly fittsTracker: FittsAimTracker;
+  private readonly cps: CpsController
+  private readonly combo: ComboTracker
+  private readonly strafe: StrafeController
+  private readonly wtap: WTapController
+  private readonly antiTrap: AntiTrap
+  private readonly crits: CriticalHandler
+  private readonly blockHit: BlockHitHandler
+  private readonly shield: ShieldManager
+  private readonly height: HeightAdvantage
+  private readonly memory: SessionMemory
+  private readonly adapter: StyleAdapter
+  private readonly decisionEngine: IDecisionAgent
+  private readonly predictionLayer: PredictionLayer
+  private readonly behaviorBlend: BehaviorBlend
+  private readonly fatigueManager: FatigueManager
+  private readonly fittsTracker: FittsAimTracker
 
-  private willBeFirstHit = true;
-  private followGoal: FollowGoal | undefined = undefined;
-  private lastHealth = 20;
-  private currentTick = 0;
-  private lookAwayTicksLeft = 0;
-  private overshootRecovering = false;
-  private kbCounterTicksLeft = 0;
+  private willBeFirstHit = true
+  private followGoal: FollowGoal | undefined = undefined
+  private lastHealth = 20
+  private currentTick = 0
+  private lookAwayTicksLeft = 0
+  private overshootRecovering = false
+  private kbCounterTicksLeft = 0
 
   constructor(
     public readonly bot: Bot,
     public readonly config: FullConfig,
     agent?: IDecisionAgent,
   ) {
-    super();
-    this.cps = new CpsController(config.cps);
-    this.combo = new ComboTracker(config.wTap.everyHits, config.blockHit.everyHits);
-    this.strafe = new StrafeController(config.strafe);
-    this.wtap = new WTapController();
-    this.antiTrap = new AntiTrap({ enabled: true, detectionTicks: 4 });
-    this.crits = new CriticalHandler(config.critical);
-    this.blockHit = new BlockHitHandler(config.blockHit, config.lowHealth);
-    this.shield = new ShieldManager(config.shield);
-    this.height = new HeightAdvantage();
-    this.memory = new SessionMemory();
-    this.adapter = new StyleAdapter(config.adaptation);
-    this.decisionEngine = agent ?? new DecisionEngine(config.decisionEngine);
-    this.predictionLayer = new PredictionLayer(config.prediction);
-    this.behaviorBlend = new BehaviorBlend(config.behaviorBlend);
-    this.fatigueManager = new FatigueManager(config.fatigue);
-    this.fittsTracker = new FittsAimTracker();
+    super()
+    this.cps = new CpsController(config.cps)
+    this.combo = new ComboTracker(config.wTap.everyHits, config.blockHit.everyHits)
+    this.strafe = new StrafeController(config.strafe)
+    this.wtap = new WTapController()
+    this.antiTrap = new AntiTrap({ enabled: true, detectionTicks: 4 })
+    this.crits = new CriticalHandler(config.critical)
+    this.blockHit = new BlockHitHandler(config.blockHit, config.lowHealth)
+    this.shield = new ShieldManager(config.shield)
+    this.height = new HeightAdvantage()
+    this.memory = new SessionMemory()
+    this.adapter = new StyleAdapter(config.adaptation)
+    this.decisionEngine = agent ?? new DecisionEngine(config.decisionEngine)
+    this.predictionLayer = new PredictionLayer(config.prediction)
+    this.behaviorBlend = new BehaviorBlend(config.behaviorBlend)
+    this.fatigueManager = new FatigueManager(config.fatigue)
+    this.fittsTracker = new FittsAimTracker()
 
-    this.bot.on('physicsTick', this.onTick);
-    this.bot.on('entitySwingArm', this.onTargetSwing);
-    this.bot.on('health', this.onHealthChange);
-    this.bot.on('entityHurt', this.onTargetHurt);
-    this.bot.on('entityDead', this.onEntityGone);
-    this.bot.on('entityGone', this.onEntityGone);
+    this.bot.on('physicsTick', this.onTick)
+    this.bot.on('entitySwingArm', this.onTargetSwing)
+    this.bot.on('health', this.onHealthChange)
+    this.bot.on('entityHurt', this.onTargetHurt)
+    this.bot.on('entityDead', this.onEntityGone)
+    this.bot.on('entityGone', this.onEntityGone)
   }
 
   async engage(target: Entity): Promise<void> {
-    if (target.id === this.target?.id) return;
-    this.stop();
-    this.target = target;
-    this.ticksToNextAttack = 0;
-    this.ticksSinceLastTargetHurt = 999;
-    this.willBeFirstHit = true;
-    this.kbCounterTicksLeft = 0;
-    this.fittsTracker.reset();
-    this.bot.tracker.trackEntity(target);
-    this.bot.tracker.trackEntity(this.bot.entity);
-    const weapon = this.findWeapon();
-    if (weapon) await this.equip(weapon);
-    this.fatigueManager.reset();
-    this.behaviorBlend.reset();
-    this.emit('startedAttacking', target);
+    if (target.id === this.target?.id) return
+    this.stop()
+    this.target = target
+    this.ticksToNextAttack = 0
+    this.ticksSinceLastTargetHurt = 999
+    this.willBeFirstHit = true
+    this.kbCounterTicksLeft = 0
+    this.fittsTracker.reset()
+    this.bot.tracker.trackEntity(target)
+    this.bot.tracker.trackEntity(this.bot.entity)
+    const weapon = this.findWeapon()
+    if (weapon) await this.equip(weapon)
+    this.fatigueManager.reset()
+    this.behaviorBlend.reset()
+    this.emit('startedAttacking', target)
   }
 
   stop(): void {
-    if (!this.target) return;
-    this.bot.tracker.stopTrackingEntity(this.target);
-    this.lastTarget = this.target;
-    this.target = undefined;
-    this.kbCounterTicksLeft = 0;
-    this.fittsTracker.reset();
-    this.combo.reset();
-    this.strafe.clearDir(this.bot);
-    this.stopFollow();
-    this.bot.clearControlStates();
-    this.emit('stoppedAttacking');
+    if (!this.target) return
+    this.bot.tracker.stopTrackingEntity(this.target)
+    this.lastTarget = this.target
+    this.target = undefined
+    this.kbCounterTicksLeft = 0
+    this.fittsTracker.reset()
+    this.combo.reset()
+    this.strafe.clearDir(this.bot)
+    this.stopFollow()
+    this.bot.clearControlStates()
+    this.emit('stoppedAttacking')
   }
 
   botReach(): number {
-    if (!this.target) return 10000;
-    const eyePos = this.bot.entity.position.offset(0, this.bot.entity.height * 0.9, 0);
-    return getEntityAABB(this.target).distanceToVec(eyePos);
+    if (!this.target) return 10000
+    const eyePos = this.bot.entity.position.offset(0, this.bot.entity.height * 0.9, 0)
+    return getEntityAABB(this.target).distanceToVec(eyePos)
   }
 
   targetReach(): number {
-    if (!this.target) return 10000;
-    const eyePos = this.target.position.offset(0, this.target.height * 0.9, 0);
-    return getEntityAABB(this.bot.entity).distanceToVec(eyePos);
+    if (!this.target) return 10000
+    const eyePos = this.target.position.offset(0, this.target.height * 0.9, 0)
+    return getEntityAABB(this.bot.entity).distanceToVec(eyePos)
   }
 
   buildSnapshot(_tick: number): Partial<CombatSnapshot> {
@@ -216,64 +217,84 @@ export class SwordCombat extends EventEmitter {
       isOnGround: this.bot.entity.onGround,
       verticalVelocity: this.bot.entity.velocity.y,
       botHealth: this.bot.health ?? 20,
-    };
+    }
   }
 
   private onTick = (): void => {
-    if (!this.target) return;
-    this.currentTick++;
-    this.ticksToNextAttack--;
-    this.ticksSinceTargetAttack++;
-    this.ticksSinceLastHurt++;
-    this.ticksSinceLastTargetHit++;
-    this.ticksSinceLastSwitch++;
-    this.ticksSinceLastTargetHurt++;
+    if (!this.target) return
+    this.currentTick++
+    this.ticksToNextAttack--
+    this.ticksSinceTargetAttack++
+    this.ticksSinceLastHurt++
+    this.ticksSinceLastTargetHit++
+    this.ticksSinceLastSwitch++
+    this.ticksSinceLastTargetHurt++
 
-    this.combo.update(this.ticksSinceLastHurt, this.ticksSinceLastTargetHit);
+    this.combo.update(this.ticksSinceLastHurt, this.ticksSinceLastTargetHit)
 
-    const profile = this.memory.getOrCreate(this.target.id);
-    const strategy = this.adapter.deriveStrategy(profile);
-    const predFrame = this.predictionLayer.update(this.target, this.bot.entity.position, this.currentTick, profile);
+    const profile = this.memory.getOrCreate(this.target.id)
+    const strategy = this.adapter.deriveStrategy(profile)
+    const predFrame = this.predictionLayer.update(
+      this.target,
+      this.bot.entity.position,
+      this.currentTick,
+      profile,
+    )
 
-    const partialSnapshot = this.buildSnapshot(this.currentTick);
-    const fullSnapshot = this.buildFullSnapshot(partialSnapshot, predFrame);
+    const partialSnapshot = this.buildSnapshot(this.currentTick)
+    const fullSnapshot = this.buildFullSnapshot(partialSnapshot, predFrame)
 
-    const decisionFrame = this.decisionEngine.evaluate(fullSnapshot, profile, strategy, predFrame, this.currentTick);
+    const decisionFrame = this.decisionEngine.evaluate(
+      fullSnapshot,
+      profile,
+      strategy,
+      predFrame,
+      this.currentTick,
+    )
 
-    const fatigueModifiers = this.fatigueManager.update(!!this.target);
-    const blendWeights = this.behaviorBlend.compute(decisionFrame, fullSnapshot, fatigueModifiers.cpsMultiplier);
+    const fatigueModifiers = this.fatigueManager.update(!!this.target)
+    const blendWeights = this.behaviorBlend.compute(
+      decisionFrame,
+      fullSnapshot,
+      fatigueModifiers.cpsMultiplier,
+    )
 
-    this.memory.updatePredictability(this.target.id);
+    this.memory.updatePredictability(this.target.id)
 
-    this.checkRange();
-    this.checkVisibility();
-    this.rotate(predFrame);
-    this.doMove(strategy, blendWeights);
-    this.doStrafe(strategy, blendWeights, fatigueModifiers.strafeFrequencyMultiplier);
-    void this.height.seekWithJumpBoost(this.bot, this.target, true, this.config.jumpBoost.useForHeightAdvantage);
-    this.checkAntiTrap();
+    this.checkRange()
+    this.checkVisibility()
+    this.rotate(predFrame)
+    this.doMove(strategy, blendWeights)
+    this.doStrafe(strategy, blendWeights, fatigueModifiers.strafeFrequencyMultiplier)
+    void this.height.seekWithJumpBoost(
+      this.bot,
+      this.target,
+      true,
+      this.config.jumpBoost.useForHeightAdvantage,
+    )
+    this.checkAntiTrap()
     // eslint-disable-next-line @typescript-eslint/no-floating-promises
-    this.checkShieldDisable().catch(() => {});
+    this.checkShieldDisable().catch(() => {})
     // eslint-disable-next-line @typescript-eslint/no-floating-promises
-    this.handleCrits().catch(() => {});
-    this.handleShieldToggle();
+    this.handleCrits().catch(() => {})
+    this.handleShieldToggle()
 
     if (this.kbCounterTicksLeft > 0) {
-      this.kbCounterTicksLeft--;
-      this.bot.setControlState('back', false);
-      this.bot.setControlState('forward', true);
-      this.bot.setControlState('sprint', true);
+      this.kbCounterTicksLeft--
+      this.bot.setControlState('back', false)
+      this.bot.setControlState('forward', true)
+      this.bot.setControlState('sprint', true)
     }
 
     if (this.ticksToNextAttack <= -1 && !this.shield.isOverrideActive) {
-      if (this.bot.entity.velocity.y <= -0.25) this.bot.setControlState('sprint', false);
+      if (this.bot.entity.velocity.y <= -0.25) this.bot.setControlState('sprint', false)
       if (
         this.bot.entity.onGround &&
         this.config.wTap.enabled &&
         blendWeights.wTapWeight > 0.35 &&
         this.combo.shouldWTap()
       ) {
-        void this.wtap.wtap(this.bot);
+        void this.wtap.wtap(this.bot)
       }
       if (
         this.shouldHitSelect(predFrame) &&
@@ -284,12 +305,15 @@ export class SwordCombat extends EventEmitter {
         ) &&
         blendWeights.attackWeight > 0.3
       ) {
-        void this.attemptAttack();
+        void this.attemptAttack()
       }
     }
-  };
+  }
 
-  private buildFullSnapshot(partial: Partial<CombatSnapshot>, predFrame: PredictionFrame): CombatSnapshot {
+  private buildFullSnapshot(
+    partial: Partial<CombatSnapshot>,
+    predFrame: PredictionFrame,
+  ): CombatSnapshot {
     return {
       phase: 'engaging',
       target: this.target,
@@ -309,92 +333,103 @@ export class SwordCombat extends EventEmitter {
       isOnGround: partial.isOnGround ?? true,
       verticalVelocity: partial.verticalVelocity ?? 0,
       predictedTargetPosition: predFrame.predictedPosition,
-    };
+    }
   }
 
   private async handleCrits(): Promise<void> {
-    if (!this.target) return;
-    const inWater = (this.bot.entity as unknown as { isInWater: boolean }).isInWater;
-    if (!this.crits.shouldAttemptCrit(this.ticksToNextAttack, this.bot.entity.onGround, this.wasInRange, inWater))
-      return;
-    await this.crits.executeCrit(this.bot, this.ticksToNextAttack);
+    if (!this.target) return
+    const inWater = (this.bot.entity as unknown as { isInWater: boolean }).isInWater
+    if (
+      !this.crits.shouldAttemptCrit(
+        this.ticksToNextAttack,
+        this.bot.entity.onGround,
+        this.wasInRange,
+        inWater,
+      )
+    )
+      return
+    await this.crits.executeCrit(this.bot, this.ticksToNextAttack)
   }
 
   private async checkShieldDisable(): Promise<void> {
-    if (!this.target || this.bot.supportFeature('doesntHaveOffHandSlot')) return;
-    if (this.ticksSinceLastSwitch < 3 || this.ticksSinceTargetAttack < 3) return;
-    await this.shield.tryDisableShield(this.bot, this.target, (w) => this.equip(w));
+    if (!this.target || this.bot.supportFeature('doesntHaveOffHandSlot')) return
+    if (this.ticksSinceLastSwitch < 3 || this.ticksSinceTargetAttack < 3) return
+    await this.shield.tryDisableShield(this.bot, this.target, (w) => this.equip(w))
   }
 
   private handleShieldToggle(): void {
-    if (this.ticksToNextAttack !== 0 || !this.wasInRange || !this.wasVisible) return;
+    if (this.ticksToNextAttack !== 0 || !this.wasInRange || !this.wasVisible) return
     if (this.shield.isEquipped(this.bot) && this.config.shield.mode === 'legit') {
-      this.bot.deactivateItem();
+      this.bot.deactivateItem()
     }
     const onAttacked = (): void => {
-      this.removeListener('attackedTarget', onAttacked);
+      this.removeListener('attackedTarget', onAttacked)
       void (async () => {
-        await bot.waitForTicks(3);
-        if (this.shield.isEquipped(this.bot)) this.bot.activateItem(true);
-      })();
-    };
-    const bot = this.bot;
-    this.once('attackedTarget', onAttacked);
+        await bot.waitForTicks(3)
+        if (this.shield.isEquipped(this.bot)) this.bot.activateItem(true)
+      })()
+    }
+    const bot = this.bot
+    this.once('attackedTarget', onAttacked)
   }
 
   private doMove(strategy: CombatStrategy, blend: BlendWeights): void {
     if (!this.target) {
-      this.bot.clearControlStates();
-      return;
+      this.bot.clearControlStates()
+      return
     }
 
-    const farAway = this.botReach() >= this.config.generic.attackRange;
+    const farAway = this.botReach() >= this.config.generic.attackRange
     if (farAway) {
-      this.startFollow();
-      return;
+      this.startFollow()
+      return
     }
 
-    this.stopFollow();
+    this.stopFollow()
 
-    const isLow = (this.bot.health ?? 20) <= this.config.lowHealth.threshold;
+    const isLow = (this.bot.health ?? 20) <= this.config.lowHealth.threshold
 
     if (this.combo.state === 'taking-damage') {
       if (isLow && this.config.lowHealth.extendedBlockEnabled) {
-        void this.blockHit.executeExtended(this.bot);
+        void this.blockHit.executeExtended(this.bot)
       } else if (this.config.blockHit.enabled && this.combo.shouldBlockHit()) {
-        void this.blockHit.execute(this.bot, !this.bot.supportFeature('doesntHaveOffHandSlot'), isLow);
+        void this.blockHit.execute(
+          this.bot,
+          !this.bot.supportFeature('doesntHaveOffHandSlot'),
+          isLow,
+        )
       }
     }
 
-    const retreatDriven = blend.retreatWeight > 0.5;
-    let shouldApproach = !isLow || !this.config.lowHealth.preferBlockOverAttack;
-    if (this.ticksSinceLastHurt < 5 && this.kbCounterTicksLeft === 0) shouldApproach = false;
-    if (this.combo.state === 'combo' && !strategy.prioritiseKb) shouldApproach = true;
-    if (retreatDriven) shouldApproach = false;
+    const retreatDriven = blend.retreatWeight > 0.5
+    let shouldApproach = !isLow || !this.config.lowHealth.preferBlockOverAttack
+    if (this.ticksSinceLastHurt < 5 && this.kbCounterTicksLeft === 0) shouldApproach = false
+    if (this.combo.state === 'combo' && !strategy.prioritiseKb) shouldApproach = true
+    if (retreatDriven) shouldApproach = false
 
-    const tooClose = this.botReach() > this.config.generic.tooCloseRange;
-    shouldApproach = shouldApproach && tooClose;
+    const tooClose = this.botReach() > this.config.generic.tooCloseRange
+    shouldApproach = shouldApproach && tooClose
 
     if (shouldTrigger(this.config.humanization.sprintToggleNoiseProbability) && shouldApproach) {
-      shouldApproach = false;
+      shouldApproach = false
     }
 
     if (!this.bot.getControlState('back')) {
-      this.bot.setControlState('forward', shouldApproach);
-      this.bot.setControlState('sprint', shouldApproach);
+      this.bot.setControlState('forward', shouldApproach)
+      this.bot.setControlState('sprint', shouldApproach)
     }
   }
 
   private doStrafe(strategy: CombatStrategy, blend: BlendWeights, fatigueMultiplier: number): void {
     if (!this.target) {
-      this.strafe.clearDir(this.bot);
-      return;
+      this.strafe.clearDir(this.bot)
+      return
     }
     if (blend.strafeWeight < 0.15) {
-      this.strafe.clearDir(this.bot);
-      return;
+      this.strafe.clearDir(this.bot)
+      return
     }
-    const forced = strategy.counterStrafeDir !== 'none' ? strategy.counterStrafeDir : undefined;
+    const forced = strategy.counterStrafeDir !== 'none' ? strategy.counterStrafeDir : undefined
     this.strafe.update(
       this.bot,
       this.target,
@@ -402,80 +437,93 @@ export class SwordCombat extends EventEmitter {
       this.config.generic.attackRange,
       forced,
       fatigueMultiplier,
-    );
+    )
   }
 
   private checkAntiTrap(): void {
-    this.antiTrap.update(this.bot, undefined);
+    this.antiTrap.update(this.bot, undefined)
   }
 
   private checkRange(): void {
-    if (!this.target) return;
-    const dist = this.target.position.distanceTo(this.bot.entity.position);
+    if (!this.target) return
+    const dist = this.target.position.distanceTo(this.bot.entity.position)
     if (dist > this.config.generic.viewDistance) {
-      this.stop();
-      return;
+      this.stop()
+      return
     }
-    const inRange = this.botReach() <= this.config.generic.attackRange;
+    const inRange = this.botReach() <= this.config.generic.attackRange
     if (!this.wasInRange && inRange && this.config.strafe.mode === 'circle') {
-      this.ticksToNextAttack = -1;
+      this.ticksToNextAttack = -1
     }
-    this.wasInRange = inRange;
+    this.wasInRange = inRange
   }
 
   private checkVisibility(): void {
-    if (!this.target) return;
-    const bb0 = getEntityAABB(this.bot.entity);
-    const bb1 = getEntityAABB(this.target);
+    if (!this.target) return
+    const bb0 = getEntityAABB(this.bot.entity)
+    const bb1 = getEntityAABB(this.target)
     if (bb0.intersects(bb1)) {
-      this.wasVisible = true;
-      return;
+      this.wasVisible = true
+      return
     }
 
-    const eyePos = this.bot.entity.position.offset(0, this.bot.entity.height * 0.9, 0);
-    const eyeDir = this.bot.util.getViewDir();
-    const reach = this.config.generic.attackRange;
-    const hit = this.bot.util.raytrace.entityRaytrace(eyePos, eyeDir, reach, (e: Entity) => e.id === this.target?.id);
+    const eyePos = this.bot.entity.position.offset(0, this.bot.entity.height * 0.9, 0)
+    const eyeDir = this.bot.util.getViewDir()
+    const reach = this.config.generic.attackRange
+    const hit = this.bot.util.raytrace.entityRaytrace(
+      eyePos,
+      eyeDir,
+      reach,
+      (e: Entity) => e.id === this.target?.id,
+    )
     if (hit === this.target) {
-      this.wasVisible = true;
-      return;
+      this.wasVisible = true
+      return
     }
 
-    const feet = this.target.position.offset(0, 0.1, 0);
-    const dirToFeet = feet.minus(eyePos).normalize();
-    const hitFeet = this.bot.util.raytrace.entityRaytrace(eyePos, dirToFeet, reach, (e: Entity) => e.id === this.target?.id);
-    this.wasVisible = hitFeet === this.target;
+    const feet = this.target.position.offset(0, 0.1, 0)
+    const dirToFeet = feet.minus(eyePos).normalize()
+    const hitFeet = this.bot.util.raytrace.entityRaytrace(
+      eyePos,
+      dirToFeet,
+      reach,
+      (e: Entity) => e.id === this.target?.id,
+    )
+    this.wasVisible = hitFeet === this.target
   }
 
   private rotate(predFrame: PredictionFrame): void {
-    if (!this.config.rotate.enabled || !this.target) return;
-    if (!this.config.rotate.lookAtHidden && !this.wasVisible) return;
+    if (!this.config.rotate.enabled || !this.target) return
+    if (!this.config.rotate.lookAtHidden && !this.wasVisible) return
 
-    const rotateCfg = this.config.rotate;
-    const humanCfg = this.config.humanization;
+    const rotateCfg = this.config.rotate
+    const humanCfg = this.config.humanization
 
     if (this.lookAwayTicksLeft > 0) {
-      this.lookAwayTicksLeft--;
-      return;
+      this.lookAwayTicksLeft--
+      return
     }
 
-    const lapseCheck = focusLapseCheck(rotateCfg.lookAwayProbability, rotateCfg.lookAwayDurationTicks);
+    const lapseCheck = focusLapseCheck(
+      rotateCfg.lookAwayProbability,
+      rotateCfg.lookAwayDurationTicks,
+    )
     if (lapseCheck.lapseOccurs) {
-      this.lookAwayTicksLeft = lapseCheck.durationTicks;
-      return;
+      this.lookAwayTicksLeft = lapseCheck.durationTicks
+      return
     }
 
-    const botEye = this.bot.entity.position.offset(0, this.bot.entity.height * 0.9, 0);
+    const botEye = this.bot.entity.position.offset(0, this.bot.entity.height * 0.9, 0)
 
     const fittsPoint = this.fittsTracker.computeAimPoint(
       botEye,
       this.bot.entity.yaw,
       this.target,
       rotateCfg.fittsBias,
-    );
+    )
 
-    const useLeadAim = rotateCfg.mode === 'constant' || this.ticksToNextAttack <= 0;
-    const leadPos = predFrame.predictedPosition;
+    const useLeadAim = rotateCfg.mode === 'constant' || this.ticksToNextAttack <= 0
+    const leadPos = predFrame.predictedPosition
 
     const aimTarget = useLeadAim
       ? new Vec3(
@@ -483,21 +531,21 @@ export class SwordCombat extends EventEmitter {
           fittsPoint.y,
           leadPos.z * 0.65 + fittsPoint.z * 0.35,
         )
-      : fittsPoint;
+      : fittsPoint
 
     const aimWithVerticalJitter = aimTarget.offset(
       0,
       eyeHeightJitter(0, humanCfg.eyeHeightVarianceFactor),
       0,
-    );
+    )
 
-    const dx = aimWithVerticalJitter.x - botEye.x;
-    const dy = aimWithVerticalJitter.y - botEye.y;
-    const dz = aimWithVerticalJitter.z - botEye.z;
-    const groundDist = Math.sqrt(dx * dx + dz * dz);
+    const dx = aimWithVerticalJitter.x - botEye.x
+    const dy = aimWithVerticalJitter.y - botEye.y
+    const dz = aimWithVerticalJitter.z - botEye.z
+    const groundDist = Math.sqrt(dx * dx + dz * dz)
 
-    let targetYaw = Math.atan2(-dx, -dz);
-    let targetPitch = groundDist > 0 ? Math.atan2(-dy, groundDist) : 0;
+    let targetYaw = Math.atan2(-dx, -dz)
+    let targetPitch = groundDist > 0 ? Math.atan2(-dy, groundDist) : 0
 
     if (rotateCfg.overshootEnabled && !this.overshootRecovering && this.ticksToNextAttack === -1) {
       const result = overshootAngle(
@@ -505,126 +553,146 @@ export class SwordCombat extends EventEmitter {
         targetYaw,
         rotateCfg.overshootAmplitude,
         rotateCfg.overshootRecoveryFactor,
-      );
-      targetYaw = result.value;
-      this.overshootRecovering = result.recovering;
+      )
+      targetYaw = result.value
+      this.overshootRecovering = result.recovering
     } else {
-      this.overshootRecovering = false;
+      this.overshootRecovering = false
     }
 
     if (shouldTrigger(rotateCfg.microSaccadeFrequency)) {
-      const saccade = microSaccade(rotateCfg.microSaccadeAmplitude);
-      targetYaw += saccade.yawDelta;
-      targetPitch += saccade.pitchDelta;
+      const saccade = microSaccade(rotateCfg.microSaccadeAmplitude)
+      targetYaw += saccade.yawDelta
+      targetPitch += saccade.pitchDelta
     }
 
-    targetPitch = Math.max(-PI_HALF, Math.min(PI_HALF, targetPitch));
+    targetPitch = Math.max(-PI_HALF, Math.min(PI_HALF, targetPitch))
 
-    const force = !rotateCfg.smooth;
+    const force = !rotateCfg.smooth
 
     if (rotateCfg.mode === 'constant' || this.ticksToNextAttack === -1) {
-      void this.bot.look(targetYaw, targetPitch, force);
+      void this.bot.look(targetYaw, targetPitch, force)
     } else if (rotateCfg.mode === 'legit') {
       if (predFrame.isComboWindowOpen || predFrame.hitChanceEstimate > 0.6) {
-        void this.bot.look(targetYaw, targetPitch, false);
+        void this.bot.look(targetYaw, targetPitch, false)
       }
     }
   }
 
   private shouldHitSelect(predFrame: PredictionFrame): boolean {
-    if (!this.target) return false;
-    if (!this.wasInRange) return false;
-    if (!this.config.generic.hitThroughWalls && !this.wasVisible) return false;
-    if (!this.bot.supportFeature('doesntHaveOffHandSlot') && this.ticksToNextAttack > -1) return false;
+    if (!this.target) return false
+    if (!this.wasInRange) return false
+    if (!this.config.generic.hitThroughWalls && !this.wasVisible) return false
+    if (!this.bot.supportFeature('doesntHaveOffHandSlot') && this.ticksToNextAttack > -1)
+      return false
 
-    const iframeProbability = this.computeIframeProbability(this.ticksSinceLastTargetHurt);
-    if (!shouldTrigger(iframeProbability)) return false;
+    const iframeProbability = this.computeIframeProbability(this.ticksSinceLastTargetHurt)
+    if (!shouldTrigger(iframeProbability)) return false
 
-    const chargeCheck = this.computeChargeProbability(this.ticksToNextAttack);
-    if (!shouldTrigger(chargeCheck)) return false;
+    const chargeCheck = this.computeChargeProbability(this.ticksToNextAttack)
+    if (!shouldTrigger(chargeCheck)) return false
 
-    const hitChanceBonus = predFrame.hitChanceEstimate > 0.5 ? 0.2 : 0;
-    const exposureBonus = predFrame.exposureScore > 0.6 ? 0.15 : 0;
-    return shouldTrigger(Math.min(1, 0.6 + hitChanceBonus + exposureBonus));
+    const hitChanceBonus = predFrame.hitChanceEstimate > 0.5 ? 0.2 : 0
+    const exposureBonus = predFrame.exposureScore > 0.6 ? 0.15 : 0
+    return shouldTrigger(Math.min(1, 0.6 + hitChanceBonus + exposureBonus))
   }
 
   private computeIframeProbability(ticksSinceHurt: number): number {
-    if (ticksSinceHurt <= 0) return 0;
-    return 1 / (1 + Math.exp(-0.9 * (ticksSinceHurt - 8)));
+    if (ticksSinceHurt <= 0) return 0
+    return 1 / (1 + Math.exp(-0.9 * (ticksSinceHurt - 8)))
   }
 
   private computeChargeProbability(ticksToNext: number): number {
-    if (ticksToNext > 2) return 0.05;
-    if (ticksToNext > 0) return 0.3;
-    const offset = ticksToNext - (-1);
-    return 1 / (1 + Math.exp(-1.8 * (offset + 1)));
+    if (ticksToNext > 2) return 0.05
+    if (ticksToNext > 0) return 0.3
+    const offset = ticksToNext - -1
+    return 1 / (1 + Math.exp(-1.8 * (offset + 1)))
   }
 
   async attemptAttack(): Promise<void> {
-    if (!this.target) return;
+    if (!this.target) return
     if (!this.wasInRange) {
-      this.willBeFirstHit = true;
-      return;
+      this.willBeFirstHit = true
+      return
     }
-    if (!this.config.generic.hitThroughWalls && !this.wasVisible) return;
+    if (!this.config.generic.hitThroughWalls && !this.wasVisible) return
 
-    if (this.config.generic.missChance > 0 && shouldTrigger(this.config.generic.missChance)) return;
+    if (this.config.generic.missChance > 0 && shouldTrigger(this.config.generic.missChance)) return
 
-    const humanCfg = this.config.humanization;
+    const humanCfg = this.config.humanization
 
     if (shouldTrigger(humanCfg.postHitPauseProbability) && !this.willBeFirstHit) {
-      await humanDelay(humanCfg.postHitPauseDurationMs);
-      if (!this.target) return;
+      await humanDelay(humanCfg.postHitPauseDurationMs)
+      if (!this.target) return
     } else {
-      await humanDelay(humanCfg.reactionDelay);
-      if (!this.target) return;
+      await humanDelay(humanCfg.reactionDelay)
+      if (!this.target) return
     }
 
-    const attackJitter = humanCfg.attackJitterMs;
+    const attackJitter = humanCfg.attackJitterMs
     if (attackJitter.max > 0 && shouldTrigger(0.4)) {
-      const jitterMs = Math.random() * (attackJitter.max - attackJitter.min) + attackJitter.min;
+      const jitterMs = Math.random() * (attackJitter.max - attackJitter.min) + attackJitter.min
       if (jitterMs > 5) {
-        await new Promise<void>((resolve) => setTimeout(resolve, jitterMs));
-        if (!this.target) return;
+        await new Promise<void>((resolve) => setTimeout(resolve, jitterMs))
+        if (!this.target) return
       }
     }
 
-    if (!this.bot.entity.onGround && this.bot.entity.velocity.y < -0.1 && this.config.critical.enabled) {
-      await this.crits.reactionCrit(this.bot, this.ticksToNextAttack);
+    if (
+      !this.bot.entity.onGround &&
+      this.bot.entity.velocity.y < -0.1 &&
+      this.config.critical.enabled
+    ) {
+      await this.crits.reactionCrit(this.bot, this.ticksToNextAttack)
     }
 
-    const target = this.target;
-    if (!target) return;
+    const target = this.target
+    if (!target) return
 
-    performAttack(this.bot, target);
-    this.willBeFirstHit = false;
-    this.ticksSinceLastTargetHit = 0;
-    this.combo.recordHit();
-    this.strafe.recordHit();
+    performAttack(this.bot, target)
+    this.willBeFirstHit = false
+    this.ticksSinceLastTargetHit = 0
+    this.combo.recordHit()
+    this.strafe.recordHit()
 
-    const fromAbove = this.bot.entity.position.y > target.position.y + 0.3;
-    const reach = this.botReach();
-    this.memory.recordAttack(target.id, this.bot.time.age, this.shield.isEquipped(this.bot), fromAbove, reach);
+    const fromAbove = this.bot.entity.position.y > target.position.y + 0.3
+    const reach = this.botReach()
+    this.memory.recordAttack(
+      target.id,
+      this.bot.time.age,
+      this.shield.isEquipped(this.bot),
+      fromAbove,
+      reach,
+    )
 
-    const heldItem = this.bot.heldItem;
-    const usedAxe = heldItem?.name.includes('_axe') ?? false;
-    const usedBow = heldItem?.name === 'bow' || heldItem?.name === 'crossbow';
-    this.memory.recordBehavior(target.id, this.bot.time.age, false, usedBow, false, false, false, usedAxe);
+    const heldItem = this.bot.heldItem
+    const usedAxe = heldItem?.name.includes('_axe') ?? false
+    const usedBow = heldItem?.name === 'bow' || heldItem?.name === 'crossbow'
+    this.memory.recordBehavior(
+      target.id,
+      this.bot.time.age,
+      false,
+      usedBow,
+      false,
+      false,
+      false,
+      usedAxe,
+    )
 
     const humanCps = humanizedCps(
       this.config.cps.max,
       this.config.humanization.cpsVarianceFactor,
       this.config.humanization.wristFatigueEnabled,
       this.config.humanization.wristFatigueCpsReduction,
-    );
-    const effectiveCps = Math.min(this.config.cps.max, humanCps);
+    )
+    const effectiveCps = Math.min(this.config.cps.max, humanCps)
 
-    this.emit('attackedTarget', target);
-    const held = this.bot.heldItem;
+    this.emit('attackedTarget', target)
+    const held = this.bot.heldItem
     if (held) {
-      const cooldown = Math.floor((1 / this.getAttackSpeed(held.name)) * 20);
-      const cpsBasedInterval = Math.floor(20 / effectiveCps);
-      this.ticksToNextAttack = Math.max(cooldown, cpsBasedInterval - 1);
+      const cooldown = Math.floor((1 / this.getAttackSpeed(held.name)) * 20)
+      const cpsBasedInterval = Math.floor(20 / effectiveCps)
+      this.ticksToNextAttack = Math.max(cooldown, cpsBasedInterval - 1)
     }
   }
 
@@ -635,78 +703,85 @@ export class SwordCombat extends EventEmitter {
       pickaxe: 1.2,
       shovel: 1.1,
       hoe: 4.0,
-    };
-    for (const [key, val] of Object.entries(speeds)) {
-      if (name.includes(key)) return val;
     }
-    return 4.0;
+    for (const [key, val] of Object.entries(speeds)) {
+      if (name.includes(key)) return val
+    }
+    return 4.0
   }
 
   findWeapon(name?: string): Item | null {
-    const target = name ?? this.weaponOfChoice;
-    const held = this.bot.inventory.slots[this.bot.getEquipmentDestSlot('hand')];
-    if (held?.name.includes(target)) return held;
-    return this.bot.util.inv.getAllItems().find((i: Item | null) => i?.name.includes(target)) ?? null;
+    const target = name ?? this.weaponOfChoice
+    const held = this.bot.inventory.slots[this.bot.getEquipmentDestSlot('hand')]
+    if (held?.name.includes(target)) return held
+    return (
+      this.bot.util.inv.getAllItems().find((i: Item | null) => i?.name.includes(target)) ?? null
+    )
   }
 
   async equip(weapon: Item): Promise<boolean> {
-    const held = this.bot.inventory.slots[this.bot.getEquipmentDestSlot('hand')];
-    if (held?.name === weapon.name) return true;
-    return this.bot.util.inv.customEquip(weapon, 'hand');
+    const held = this.bot.inventory.slots[this.bot.getEquipmentDestSlot('hand')]
+    if (held?.name === weapon.name) return true
+    return this.bot.util.inv.customEquip(weapon, 'hand')
   }
 
   private startFollow(): void {
-    if (!this.target) return;
-    const pf = (this.bot as BotWithPathfinder).pathfinder;
-    if (!pf) return;
-    const predictTicks = this.config.follow.predictive ? this.config.follow.predictTicks : 0;
-    this.followGoal = new FollowGoal(this.bot, this.target, this.config.follow.distance, predictTicks);
-    pf.setGoal(this.followGoal, true);
+    if (!this.target) return
+    const pf = (this.bot as BotWithPathfinder).pathfinder
+    if (!pf) return
+    const predictTicks = this.config.follow.predictive ? this.config.follow.predictTicks : 0
+    this.followGoal = new FollowGoal(
+      this.bot,
+      this.target,
+      this.config.follow.distance,
+      predictTicks,
+    )
+    pf.setGoal(this.followGoal, true)
   }
 
   private stopFollow(): void {
-    if (!this.followGoal) return;
-    const pf = (this.bot as BotWithPathfinder).pathfinder;
-    if (pf) pf.stop();
-    this.followGoal = undefined;
+    if (!this.followGoal) return
+    const pf = (this.bot as BotWithPathfinder).pathfinder
+    if (pf) pf.stop()
+    this.followGoal = undefined
   }
 
   private onTargetSwing = (entity: Entity): void => {
     if (entity === this.target) {
-      this.ticksSinceTargetAttack = 0;
-      this.predictionLayer.recordEnemyAttack(this.currentTick);
+      this.ticksSinceTargetAttack = 0
+      this.predictionLayer.recordEnemyAttack(this.currentTick)
     }
-  };
+  }
 
   private onEntityGone = (entity: Entity): void => {
-    if (this.target && entity.id === this.target.id) this.stop();
-  };
+    if (this.target && entity.id === this.target.id) this.stop()
+  }
 
   private onTargetHurt = (entity: Entity): void => {
     if (this.target && entity.id === this.target.id) {
-      this.ticksSinceLastTargetHurt = 0;
-      this.memory.recordStagger(entity.id);
+      this.ticksSinceLastTargetHurt = 0
+      this.memory.recordStagger(entity.id)
     }
-  };
+  }
 
   private onHealthChange = (): void => {
-    const hp = this.bot.health ?? 20;
+    const hp = this.bot.health ?? 20
     if (hp >= this.lastHealth) {
-      this.lastHealth = hp;
-      return;
+      this.lastHealth = hp
+      return
     }
-    this.lastHealth = hp;
-    this.ticksSinceLastHurt = 0;
+    this.lastHealth = hp
+    this.ticksSinceLastHurt = 0
 
     if (this.ticksSinceTargetAttack < 6) {
-      this.ticksSinceLastTargetHit = 0;
+      this.ticksSinceLastTargetHit = 0
     }
 
-    this.kbCounterTicksLeft = 3;
+    this.kbCounterTicksLeft = 3
 
     if (this.target) {
-      const wasAggressive = this.ticksSinceTargetAttack < 8;
-      this.memory.recordPostHitBehavior(this.target.id, wasAggressive);
+      const wasAggressive = this.ticksSinceTargetAttack < 8
+      this.memory.recordPostHitBehavior(this.target.id, wasAggressive)
     }
-  };
+  }
 }

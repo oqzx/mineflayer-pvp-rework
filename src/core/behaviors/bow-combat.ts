@@ -1,35 +1,35 @@
-import { StateBehavior } from '@nxg-org/mineflayer-static-statemachine';
-import type { Bot } from 'mineflayer';
-import type { StateMachineData } from '@nxg-org/mineflayer-static-statemachine';
-import type { PvpData } from '../pvp-data.js';
+import { StateBehavior } from '@nxg-org/mineflayer-static-statemachine'
+import type { Bot } from 'mineflayer'
+import type { StateMachineData } from '@nxg-org/mineflayer-static-statemachine'
+import type { PvpData } from '../pvp-data.js'
 
 export class BowCombatBehavior extends StateBehavior {
-  static readonly stateName = 'BowCombat';
+  static readonly stateName = 'BowCombat'
 
   constructor(bot: Bot, data: StateMachineData) {
-    super(bot, data);
+    super(bot, data)
   }
 
   onStateEntered(): void {
-    const d = this.data as PvpData;
-    if (!d.entity) return;
-    void d.projectile.engage(d.entity);
+    const d = this.data as PvpData
+    if (!d.entity) return
+    void d.projectile.engage(d.entity)
   }
 
   update(): void {
-    const d = this.data as PvpData;
-    if (!d.entity) return;
+    const d = this.data as PvpData
+    if (!d.entity) return
     if (!d.projectile.isActive) {
-      void d.projectile.engage(d.entity);
+      void d.projectile.engage(d.entity)
     }
   }
 
   isFinished(): boolean {
-    return false;
+    return false
   }
 
   onStateExited(): void {
-    const d = this.data as PvpData;
-    d.projectile.stop();
+    const d = this.data as PvpData
+    d.projectile.stop()
   }
 }
