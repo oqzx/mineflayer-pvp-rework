@@ -10,7 +10,6 @@ import { performAttack } from '../util/attack.js';
 import {
   humanDelay,
   shouldTrigger,
-  gaussianNoise,
   microSaccade,
   eyeHeightJitter,
   focusLapseCheck,
@@ -251,7 +250,7 @@ export class SwordCombat extends EventEmitter {
     this.rotate(predFrame);
     this.doMove(strategy, blendWeights);
     this.doStrafe(strategy, blendWeights, fatigueModifiers.strafeFrequencyMultiplier);
-    this.height.seekWithJumpBoost(this.bot, this.target, true, this.config.jumpBoost.useForHeightAdvantage);
+    void this.height.seekWithJumpBoost(this.bot, this.target, true, this.config.jumpBoost.useForHeightAdvantage);
     this.checkAntiTrap();
     void this.checkShieldDisable();
     void this.handleCrits();
