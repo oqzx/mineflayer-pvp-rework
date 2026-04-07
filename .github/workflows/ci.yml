@@ -1,22 +1,43 @@
-# This workflow will do a clean install of node dependencies, build the source code and run tests across different versions of node
-name: Continuous Integration
+name: CI
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [main, dev, rewrite]
+  pull_request:
+    branches: [main, dev, rewrite]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
 
 jobs:
-  build:
+  quality:
+    name: Quality Checks
     runs-on: ubuntu-latest
 
-    strategy:
-      matrix:
-        node-version: [18.x, 20.x]
-
     steps:
-      - uses: actions/checkout@v2
-      - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v2
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
         with:
-          node-version: ${{ matrix.node-version }}
-      - run: yarn --dev
-      - run: yarn build
-      # - run: yarn test
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Prettier
+        id: prettier
+        run: npm run format
+
+      - name: ESLint
+        id: eslint
+        run: npm run lint:fix
+
+      - name: TypeScript
+        id: typecheck
+        run: npm run typecheck
