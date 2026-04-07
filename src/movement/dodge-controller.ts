@@ -6,18 +6,19 @@ import type { IncomingProjectile } from '../core/combat-state.js'
 import { vectorMagnitude } from '../calc/math.js'
 import { randomIntInRange, delay } from '../util/humanizer.js'
 
-const FIREBALL_ENTITY_NAMES = new Set(['fireball', 'small_fireball', 'wither_skull'])
-const ARROW_ENTITY_NAMES = new Set(['arrow', 'spectral_arrow', 'trident'])
+const FIREBALL_ENTITY_NAMES = ['fireball', 'small_fireball', 'wither_skull']
+const ARROW_ENTITY_NAMES = ['arrow', 'spectral_arrow', 'trident']
 
 export function classifyProjectile(entity: Entity): IncomingProjectile['type'] | null {
-  const name = entity.name ?? ''
-  if (ARROW_ENTITY_NAMES.has(name)) return 'arrow'
-  if (FIREBALL_ENTITY_NAMES.has(name)) return 'fireball'
-  if (name === 'ender_pearl') return 'pearl'
+  const name = entity.name?.toLowerCase() ?? ''
+  if (ARROW_ENTITY_NAMES.findIndex(p=>name.includes(p)) !== -1) return 'arrow'
+  if (FIREBALL_ENTITY_NAMES.findIndex(p=>name.includes(p)) !== -1) return 'fireball'
+  if (name === 'ender_peal') return 'pearl'
   return null
 }
 
 export function isHeadingToward(projectile: Entity, target: Entity, threshold = 1.5): boolean {
+  // vel is always zero.
   const vel = projectile.velocity
   const speed = vectorMagnitude(vel)
   if (speed < 0.01) return false
@@ -30,6 +31,7 @@ export function isHeadingToward(projectile: Entity, target: Entity, threshold = 
     dir.z * toTarget.x - dir.x * toTarget.z,
     dir.x * toTarget.y - dir.y * toTarget.x,
   )
+  console.log(vectorMagnitude(cross))
   return vectorMagnitude(cross) < threshold
 }
 

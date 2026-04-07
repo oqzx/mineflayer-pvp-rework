@@ -174,7 +174,9 @@ export class StateMachine extends EventEmitter {
     for (const entity of Object.values(this.bot.entities)) {
       if (!entity || entity === this.bot.entity) continue
       const type = classifyProjectile(entity)
+
       if (!type) continue
+      console.log(type, entity.name)
       if (!isHeadingToward(entity, this.bot.entity)) continue
       const impactTick = this.tick + estimateImpactTick(entity, this.bot.entity)
       this.data.incomingProjectiles.push({
