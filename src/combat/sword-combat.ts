@@ -252,7 +252,9 @@ export class SwordCombat extends EventEmitter {
     this.doStrafe(strategy, blendWeights, fatigueModifiers.strafeFrequencyMultiplier);
     void this.height.seekWithJumpBoost(this.bot, this.target, true, this.config.jumpBoost.useForHeightAdvantage);
     this.checkAntiTrap();
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
     this.checkShieldDisable().catch(() => {});
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
     this.handleCrits().catch(() => {});
     this.handleShieldToggle();
 
