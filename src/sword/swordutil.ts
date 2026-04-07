@@ -1,9 +1,36 @@
 import { Entity } from "prismarine-entity";
 import { Bot } from "mineflayer";
+import { Item } from "prismarine-item";
 import { Vec3 } from "vec3";
 import { goals } from "mineflayer-pathfinder";
 import "mineflayer-pathfinder";
 import { FollowConfig, FullConfig } from "./swordconfigs";
+
+export interface MaxDamageOffset {
+  getTicks(item: Item | null): number;
+}
+
+export class NewPVPTicks implements MaxDamageOffset {
+  constructor(private readonly bot: Bot) {}
+
+  getTicks(item: Item | null): number {
+    if (!item) return 20;
+    const attackSpeed: number = (item as any).attackSpeed ?? 4;
+    return Math.max(1, Math.ceil(20 / attackSpeed));
+  }
+}
+
+export class OldPVPTicks implements MaxDamageOffset {
+  private readonly ticksPerAttack: number;
+
+  constructor(private readonly bot: Bot, cps: number) {
+    this.ticksPerAttack = Math.max(1, Math.ceil(20 / cps));
+  }
+
+  getTicks(_item: Item | null): number {
+    return this.ticksPerAttack;
+  }
+}
 
 class PredictiveGoal extends goals.Goal {
   private readonly rangeSq: number;
