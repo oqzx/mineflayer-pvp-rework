@@ -1,4 +1,5 @@
 import { getTransition } from '@nxg-org/mineflayer-static-statemachine';
+import type { Bot } from 'mineflayer';
 import type { PvpData } from '../pvp-data.js';
 import { IdleBehavior } from './idle.js';
 import { EngagingBehavior } from './engaging.js';
@@ -11,9 +12,8 @@ import { BowCombatBehavior } from './bow-combat.js';
 import { DodgeBehavior } from './dodge.js';
 import { EatingBehavior } from './eating.js';
 import { PearlingBehavior } from './pearling.js';
-import type { StateBehavior } from '@nxg-org/mineflayer-static-statemachine';
 
-type AnyState = { data: object; bot: import('mineflayer').Bot };
+type AnyState = { data: object; bot: Bot };
 
 function pvp(s: AnyState): PvpData {
   return s.data as PvpData;
