@@ -7,6 +7,7 @@ export type GenericConfig = {
   enemyReach: number
   hitThroughWalls: boolean
   missChance: number
+  respectIframes: boolean
 }
 
 export type CpsConfig = {

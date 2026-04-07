@@ -18,10 +18,10 @@ import {
 } from '../util/humanizer.js'
 import { FittsAimTracker } from '../util/fitts-aim.js'
 import { CpsController } from './cps-controller.js'
+import { AttackDebugger } from './attack-debugger.js'
 import { ComboTracker } from './combo-tracker.js'
 import { StrafeController } from '../movement/strafe-controller.js'
 import { WTapController } from '../movement/w-tap-controller.js'
-import { AntiTrap } from '../movement/anti-trap.js'
 import { CriticalHandler } from '../tactics/critical-handler.js'
 import { BlockHitHandler } from '../tactics/block-hit.js'
 import { ShieldManager } from '../tactics/shield-manager.js'
@@ -42,6 +42,7 @@ import 'mineflayer-pathfinder'
 const { getEntityAABB } = AABBUtils
 
 const PI_HALF = Math.PI / 2
+const DEBUG_ATTACK_SKIPS = false
 
 type BotWithPathfinder = Bot & {
   pathfinder: { setGoal(g: goals.Goal, dynamic: boolean): void; stop(): void }
@@ -106,10 +107,10 @@ export class SwordCombat extends EventEmitter {
   public weaponOfChoice = 'sword'
 
   private readonly cps: CpsController
+  private readonly attackDebug: AttackDebugger
   private readonly combo: ComboTracker
   private readonly strafe: StrafeController
   private readonly wtap: WTapController
-  private readonly antiTrap: AntiTrap
   private readonly crits: CriticalHandler
   private readonly blockHit: BlockHitHandler
   private readonly shield: ShieldManager
@@ -137,10 +138,10 @@ export class SwordCombat extends EventEmitter {
   ) {
     super()
     this.cps = new CpsController(config.cps)
+    this.attackDebug = new AttackDebugger(DEBUG_ATTACK_SKIPS)
     this.combo = new ComboTracker(config.wTap.everyHits, config.blockHit.everyHits)
     this.strafe = new StrafeController(config.strafe)
     this.wtap = new WTapController()
-    this.antiTrap = new AntiTrap({ enabled: true, detectionTicks: 4 })
     this.crits = new CriticalHandler(config.critical)
     this.blockHit = new BlockHitHandler(config.blockHit, config.lowHealth)
     this.shield = new ShieldManager(config.shield)
@@ -220,6 +221,23 @@ export class SwordCombat extends EventEmitter {
     }
   }
 
+  private debugSnapshot(
+    cpsState = this.cps.getDebugState(this.currentTick),
+  ) {
+    return {
+      target: this.target,
+      phase: this.combo.state,
+      inRange: this.wasInRange,
+      visible: this.wasVisible,
+      ticksToNextAttack: this.ticksToNextAttack,
+      age: this.bot.time.age,
+      cpsElapsedTicks: cpsState.elapsedTicks,
+      cpsNextIntervalTicks: cpsState.nextIntervalTicks,
+      cpsReadyInTicks: cpsState.readyInTicks,
+      intendedCps: cpsState.intendedCps,
+    }
+  }
+
   private onTick = (): void => {
     if (!this.target) return
     this.currentTick++
@@ -272,7 +290,6 @@ export class SwordCombat extends EventEmitter {
       true,
       this.config.jumpBoost.useForHeightAdvantage,
     )
-    this.checkAntiTrap()
     // eslint-disable-next-line @typescript-eslint/no-floating-promises
     this.checkShieldDisable().catch(() => {})
     // eslint-disable-next-line @typescript-eslint/no-floating-promises
@@ -286,28 +303,51 @@ export class SwordCombat extends EventEmitter {
       this.bot.setControlState('sprint', true)
     }
 
-    if (this.ticksToNextAttack <= -1 && !this.shield.isOverrideActive) {
-      if (this.bot.entity.velocity.y <= -0.25) this.bot.setControlState('sprint', false)
-      if (
-        this.bot.entity.onGround &&
-        this.config.wTap.enabled &&
-        blendWeights.wTapWeight > 0.35 &&
-        this.combo.shouldWTap()
-      ) {
-        void this.wtap.wtap(this.bot)
-      }
-      if (
-        this.shouldHitSelect(predFrame) &&
-        this.cps.shouldAttack(
-          this.bot.time.age,
-          this.combo.state === 'combo' ? 'combo' : 'engaging',
-          fatigueModifiers.cpsMultiplier,
-        ) &&
-        blendWeights.attackWeight > 0.3
-      ) {
-        void this.attemptAttack()
-      }
+    if (this.ticksToNextAttack > -1) {
+      this.attackDebug.skip('local_cooldown_gate', this.debugSnapshot())
+      return
     }
+
+    if (this.shield.isOverrideActive) {
+      this.attackDebug.skip('shield_override_active', this.debugSnapshot())
+      return
+    }
+
+    if (this.bot.entity.velocity.y <= -0.25) this.bot.setControlState('sprint', false)
+    if (
+      this.bot.entity.onGround &&
+      this.config.wTap.enabled &&
+      blendWeights.wTapWeight > 0.35 &&
+      this.combo.shouldWTap()
+    ) {
+      void this.wtap.wtap(this.bot)
+    }
+
+    const shouldHit = this.shouldHitSelect(predFrame)
+    if (!shouldHit) return
+
+    const cpsStateBefore = this.cps.getDebugState(this.currentTick)
+    const cpsReady = this.cps.shouldAttack(
+      this.currentTick,
+      this.combo.state === 'combo' ? 'combo' : 'engaging',
+      fatigueModifiers.cpsMultiplier,
+    )
+    if (!cpsReady) {
+      this.attackDebug.skip('cps_controller_gate', this.debugSnapshot(cpsStateBefore), {
+        age: this.currentTick,
+        fatigueMultiplier: fatigueModifiers.cpsMultiplier.toFixed(3),
+      })
+      return
+    }
+
+    if (blendWeights.attackWeight <= 0.3) {
+      this.attackDebug.skip('blend_weight_gate', this.debugSnapshot(), {
+        attackWeight: blendWeights.attackWeight.toFixed(3),
+      })
+      return
+    }
+
+    void this.attemptAttack()
   }
 
   private buildFullSnapshot(
@@ -440,10 +480,6 @@ export class SwordCombat extends EventEmitter {
     )
   }
 
-  private checkAntiTrap(): void {
-    this.antiTrap.update(this.bot, undefined)
-  }
-
   private checkRange(): void {
     if (!this.target) return
     const dist = this.target.position.distanceTo(this.bot.entity.position)
@@ -545,7 +581,7 @@ export class SwordCombat extends EventEmitter {
     const groundDist = Math.sqrt(dx * dx + dz * dz)
 
     let targetYaw = Math.atan2(-dx, -dz)
-    let targetPitch = groundDist > 0 ? Math.atan2(-dy, groundDist) : 0
+    let targetPitch = groundDist > 0 ? Math.atan2(dy, groundDist) : 0
 
     if (rotateCfg.overshootEnabled && !this.overshootRecovering && this.ticksToNextAttack === -1) {
       const result = overshootAngle(
@@ -580,21 +616,63 @@ export class SwordCombat extends EventEmitter {
   }
 
   private shouldHitSelect(predFrame: PredictionFrame): boolean {
-    if (!this.target) return false
-    if (!this.wasInRange) return false
-    if (!this.config.generic.hitThroughWalls && !this.wasVisible) return false
-    if (!this.bot.supportFeature('doesntHaveOffHandSlot') && this.ticksToNextAttack > -1)
+    if (!this.target) {
+      this.attackDebug.skip('missing_target', this.debugSnapshot())
       return false
+    }
+    if (!this.wasInRange) {
+      this.attackDebug.skip('out_of_range', this.debugSnapshot(), {
+        botReach: this.botReach().toFixed(3),
+        attackRange: this.config.generic.attackRange.toFixed(3),
+      })
+      return false
+    }
+    if (!this.config.generic.hitThroughWalls && !this.wasVisible) {
+      this.attackDebug.skip('not_visible', this.debugSnapshot())
+      return false
+    }
+    if (!this.bot.supportFeature('doesntHaveOffHandSlot') && this.ticksToNextAttack > -1) {
+      this.attackDebug.skip('offhand_cooldown_gate', this.debugSnapshot())
+      return false
+    }
 
-    const iframeProbability = this.computeIframeProbability(this.ticksSinceLastTargetHurt)
-    if (!shouldTrigger(iframeProbability)) return false
+    if (this.config.generic.respectIframes) {
+      const iframeProbability = this.computeIframeProbability(this.ticksSinceLastTargetHurt)
+      const iframeRoll = Math.random()
+      if (iframeRoll >= iframeProbability) {
+        this.attackDebug.skip('iframe_probability_gate', this.debugSnapshot(), {
+          iframeProbability: iframeProbability.toFixed(3),
+          iframeRoll: iframeRoll.toFixed(3),
+          ticksSinceTargetHurt: this.ticksSinceLastTargetHurt,
+        })
+        return false
+      }
+    }
 
     const chargeCheck = this.computeChargeProbability(this.ticksToNextAttack)
-    if (!shouldTrigger(chargeCheck)) return false
+    const chargeRoll = Math.random()
+    if (chargeRoll >= chargeCheck) {
+      this.attackDebug.skip('charge_probability_gate', this.debugSnapshot(), {
+        chargeProbability: chargeCheck.toFixed(3),
+        chargeRoll: chargeRoll.toFixed(3),
+      })
+      return false
+    }
 
     const hitChanceBonus = predFrame.hitChanceEstimate > 0.5 ? 0.2 : 0
     const exposureBonus = predFrame.exposureScore > 0.6 ? 0.15 : 0
-    return shouldTrigger(Math.min(1, 0.6 + hitChanceBonus + exposureBonus))
+    const finalProbability = Math.min(1, 0.6 + hitChanceBonus + exposureBonus)
+    const finalRoll = Math.random()
+    if (finalRoll >= finalProbability) {
+      this.attackDebug.skip('final_attack_probability_gate', this.debugSnapshot(), {
+        finalProbability: finalProbability.toFixed(3),
+        finalRoll: finalRoll.toFixed(3),
+        hitChanceEstimate: predFrame.hitChanceEstimate.toFixed(3),
+        exposureScore: predFrame.exposureScore.toFixed(3),
+      })
+      return false
+    }
+    return true
   }
 
   private computeIframeProbability(ticksSinceHurt: number): number {
@@ -605,19 +683,33 @@ export class SwordCombat extends EventEmitter {
   private computeChargeProbability(ticksToNext: number): number {
     if (ticksToNext > 2) return 0.05
     if (ticksToNext > 0) return 0.3
-    const offset = ticksToNext - -1
-    return 1 / (1 + Math.exp(-1.8 * (offset + 1)))
+    const overdueTicks = Math.abs(Math.min(ticksToNext + 1, 0))
+    return 1 - Math.exp(-0.9 * overdueTicks)
   }
 
   async attemptAttack(): Promise<void> {
-    if (!this.target) return
-    if (!this.wasInRange) {
-      this.willBeFirstHit = true
+    if (!this.target) {
+      this.attackDebug.skip('attempt_attack_missing_target', this.debugSnapshot())
       return
     }
-    if (!this.config.generic.hitThroughWalls && !this.wasVisible) return
+    if (!this.wasInRange) {
+      this.willBeFirstHit = true
+      this.attackDebug.skip('attempt_attack_out_of_range', this.debugSnapshot(), {
+        botReach: this.botReach().toFixed(3),
+      })
+      return
+    }
+    if (!this.config.generic.hitThroughWalls && !this.wasVisible) {
+      this.attackDebug.skip('attempt_attack_not_visible', this.debugSnapshot())
+      return
+    }
 
-    if (this.config.generic.missChance > 0 && shouldTrigger(this.config.generic.missChance)) return
+    if (this.config.generic.missChance > 0 && shouldTrigger(this.config.generic.missChance)) {
+      this.attackDebug.skip('miss_chance_roll', this.debugSnapshot(), {
+        missChance: this.config.generic.missChance.toFixed(3),
+      })
+      return
+    }
 
     const humanCfg = this.config.humanization
 
@@ -693,6 +785,19 @@ export class SwordCombat extends EventEmitter {
       const cooldown = Math.floor((1 / this.getAttackSpeed(held.name)) * 20)
       const cpsBasedInterval = Math.floor(20 / effectiveCps)
       this.ticksToNextAttack = Math.max(cooldown, cpsBasedInterval - 1)
+      this.attackDebug.hit(this.debugSnapshot(), {
+        weapon: held.name,
+        weaponCooldownTicks: cooldown,
+        cpsBasedIntervalTicks: cpsBasedInterval,
+        effectiveCps: effectiveCps.toFixed(2),
+        configuredMaxCps: this.config.cps.max,
+      })
+    } else {
+      this.attackDebug.hit(this.debugSnapshot(), {
+        weapon: 'none',
+        effectiveCps: effectiveCps.toFixed(2),
+        configuredMaxCps: this.config.cps.max,
+      })
     }
   }
 

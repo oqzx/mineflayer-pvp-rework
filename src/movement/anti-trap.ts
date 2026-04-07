@@ -1,5 +1,6 @@
 import type { Bot, ControlState } from 'mineflayer'
 import { Vec3 } from 'vec3'
+import { holdJumpForNextTick } from '../util/jump-control.js'
 
 export type AntiTrapConfig = {
   enabled: boolean
@@ -37,8 +38,7 @@ export class AntiTrap {
       const opposite: ControlState = escapeDir === 'left' ? 'right' : 'left'
       bot.setControlState(escapeDir, true)
       bot.setControlState(opposite, false)
-      bot.setControlState('jump', true)
-      bot.setControlState('jump', false)
+      holdJumpForNextTick(bot)
       return escapeDir
     }
 

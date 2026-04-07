@@ -1,5 +1,6 @@
 import type { Bot } from 'mineflayer'
 import type { CriticalConfig } from '../config/types.js'
+import { holdJumpForNextTick } from '../util/jump-control.js'
 
 export class CriticalHandler {
   private awaitingCrit: boolean = false
@@ -62,8 +63,7 @@ export class CriticalHandler {
 
   private hop(bot: Bot, ticksToNextAttack: number): void {
     if (ticksToNextAttack === 8 || !bot.entity.onGround) return
-    bot.setControlState('jump', true)
-    bot.setControlState('jump', false)
+    holdJumpForNextTick(bot)
   }
 
   private async shorthop(bot: Bot): Promise<void> {

@@ -1,5 +1,6 @@
 import type { Bot } from 'mineflayer'
 import type { Entity } from 'prismarine-entity'
+import { holdJumpForNextTick } from '../util/jump-control.js'
 
 const JUMP_THRESHOLD = 0.4
 const JUMP_BOOST_THRESHOLD = 1.2
@@ -20,8 +21,7 @@ export class HeightAdvantage {
     if (!enabled || !bot.entity.onGround) return
     const diff = bot.entity.position.y - target.position.y
     if (diff >= JUMP_THRESHOLD) return
-    bot.setControlState('jump', true)
-    bot.setControlState('jump', false)
+    holdJumpForNextTick(bot)
   }
 
   hasJumpBoost(bot: Bot): boolean {
@@ -59,8 +59,7 @@ export class HeightAdvantage {
 
     if (diff < -JUMP_BOOST_THRESHOLD && jumpBoostEnabled && this.hasJumpBoost(bot)) {
       if (bot.entity.onGround) {
-        bot.setControlState('jump', true)
-        bot.setControlState('jump', false)
+        holdJumpForNextTick(bot)
       }
       return
     }

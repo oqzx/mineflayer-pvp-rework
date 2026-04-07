@@ -1,0 +1,52 @@
+import type { Bot, ControlState } from 'mineflayer'
+
+type JumpTracker = {
+  touchVersion: number
+  installed: boolean
+}
+
+type BotWithPatchedJump = Bot & {
+  setControlState(state: ControlState, value: boolean): void
+}
+
+const trackers = new WeakMap<Bot, JumpTracker>()
+
+function getTracker(bot: Bot): JumpTracker {
+  let tracker = trackers.get(bot)
+  if (!tracker) {
+    tracker = {
+      touchVersion: 0,
+      installed: false,
+    }
+    trackers.set(bot, tracker)
+  }
+  return tracker
+}
+
+function installJumpTracker(bot: BotWithPatchedJump): JumpTracker {
+  const tracker = getTracker(bot)
+  if (tracker.installed) return tracker
+
+  const original = bot.setControlState.bind(bot)
+  bot.setControlState = ((state: ControlState, value: boolean): void => {
+    if (state === 'jump') tracker.touchVersion++
+    original(state, value)
+  }) as typeof bot.setControlState
+
+  tracker.installed = true
+  return tracker
+}
+
+export function holdJumpForNextTick(bot: Bot): void {
+  const trackedBot = bot as BotWithPatchedJump
+  const tracker = installJumpTracker(trackedBot)
+
+  trackedBot.setControlState('jump', true)
+  const heldVersion = tracker.touchVersion
+
+  void (async () => {
+    await trackedBot.waitForTicks(1)
+    if (tracker.touchVersion !== heldVersion) return
+    trackedBot.setControlState('jump', false)
+  })()
+}

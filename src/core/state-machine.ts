@@ -40,6 +40,7 @@ const PHASE_NAME_MAP: Record<string, CombatPhase> = {
   Dodging: 'dodging',
   Eating: 'eating',
   Pearling: 'pearling',
+  Stuck: 'stuck',
 }
 
 export class StateMachine extends EventEmitter {

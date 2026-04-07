@@ -8,6 +8,7 @@ export const defaultConfig: FullConfig = {
     enemyReach: 3.0,
     hitThroughWalls: false,
     missChance: 0,
+    respectIframes: false,
   },
   cps: {
     max: 16,

@@ -14,6 +14,7 @@ export type CombatPhase =
   | 'pearling'
   | 'bow-combat'
   | 'dodging'
+  | 'stuck'
 
 export type ThreatLevel = 'none' | 'low' | 'medium' | 'high' | 'critical'
 

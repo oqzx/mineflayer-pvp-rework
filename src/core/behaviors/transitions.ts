@@ -12,6 +12,7 @@ import { BowCombatBehavior } from './bow-combat.js'
 import { DodgeBehavior } from './dodge.js'
 import { EatingBehavior } from './eating.js'
 import { PearlingBehavior } from './pearling.js'
+import { buildStuckTransitions } from './stuck/index.js'
 
 type AnyState = { data: object; bot: Bot }
 
@@ -30,6 +31,7 @@ function needsHeal(s: AnyState): boolean {
 }
 
 export function buildTransitions() {
+  const stuckTransitions = buildStuckTransitions(IdleBehavior)
   const MELEE = [
     EngagingBehavior,
     ComboBehavior,
@@ -155,6 +157,7 @@ export function buildTransitions() {
     .build()
 
   return [
+    ...stuckTransitions,
     idleToEngaging,
     meleeToIdle,
     engagingToCombo,
