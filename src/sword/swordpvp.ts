@@ -4,10 +4,10 @@ import { Entity } from "prismarine-entity";
 import { Item } from "prismarine-item";
 import { EventEmitter } from "stream";
 import { Vec3 } from "vec3";
-import { getTargetYaw, lookingAt, movingAt } from "../calc/mathUtils";
+import { getTargetYaw, lookingAt, movingAt } from "../calc/math";
 import { attack } from "../util";
 import { defaultConfig, FullConfig, getConfig } from "./swordconfigs";
-import { MaxDamageOffset, NewPVPTicks, OldPVPTicks } from "./sworddata";
+import { MaxDamageOffset, NewPVPTicks, OldPVPTicks } from "./swordutil";
 import { followEntity, stopFollow } from "./swordutil";
 
 const { getEntityAABB } = AABBUtils;
@@ -153,7 +153,7 @@ export class SwordPvp extends EventEmitter {
   private clearShieldToggleListener() {
     if (!this.shieldToggleListener) return;
     this.off("attackedTarget", this.shieldToggleListener);
-    this.shieldToggleListener = undefined;
+    delete this.shieldToggleListener;
   }
 
   hurtUpdate = async (entity: Entity) => {
@@ -255,7 +255,7 @@ export class SwordPvp extends EventEmitter {
     this.clearShieldToggleListener();
     this.lastTarget = this.target;
     this.bot.tracker.stopTrackingEntity(this.target);
-    this.target = undefined;
+    delete this.target;
     this.comboState = "neutral";
     this.targetVelocityHistory = [];
     this.consecutiveWallHitTicks = 0;
@@ -532,7 +532,7 @@ export class SwordPvp extends EventEmitter {
     if (!this.target) {
       if (this.currentStrafeDir) {
         this.bot.setControlState(this.currentStrafeDir, false);
-        this.currentStrafeDir = undefined;
+        delete this.currentStrafeDir;
       }
       return false;
     }
@@ -542,8 +542,8 @@ export class SwordPvp extends EventEmitter {
     const shouldMove = Math.abs(diff) < (this.options.strafeConfig.mode.maxOffset ?? PIOver3);
     if (!shouldMove) {
       if (this.currentStrafeDir) this.bot.setControlState(this.currentStrafeDir, false);
-      this.currentStrafeDir = undefined;
-      return;
+      delete this.currentStrafeDir;
+      return false;
     }
 
     switch (this.options.strafeConfig.mode.mode) {
@@ -577,7 +577,7 @@ export class SwordPvp extends EventEmitter {
         if (this.ticksSinceLastTargetHit > 40) {
           this.bot.setControlState("left", false);
           this.bot.setControlState("right", false);
-          this.currentStrafeDir = undefined;
+          delete this.currentStrafeDir;
         } else {
           if (this.strafeCounter < 0 || this.currentStrafeDir === undefined) {
             this.strafeCounter = Math.floor(Math.random() * 20) + 5;
@@ -589,7 +589,7 @@ export class SwordPvp extends EventEmitter {
             this.bot.setControlState(oppositeSmartDir, false);
           } else {
             if (this.currentStrafeDir) this.bot.setControlState(this.currentStrafeDir, false);
-            this.currentStrafeDir = undefined;
+            delete this.currentStrafeDir;
           }
         }
         this.strafeCounter--;
@@ -633,16 +633,18 @@ export class SwordPvp extends EventEmitter {
             this.bot.setControlState(oppositeDir, false);
           } else {
             this.bot.setControlState(this.currentStrafeDir, false);
-            this.currentStrafeDir = undefined;
+            delete this.currentStrafeDir;
           }
         }
         break;
       }
     }
+
+    return true;
   }
 
   async sprintTap() {
-    if (!this.target) return;
+    if (!this.target) return false;
     if (!this.bot.entity.onGround) return false;
     if (!this.wasInRange) return false;
     if (!this.wasVisible) return false;
@@ -679,6 +681,8 @@ export class SwordPvp extends EventEmitter {
       default:
         break;
     }
+
+    return true;
   }
 
   async toggleShield() {
@@ -702,6 +706,7 @@ export class SwordPvp extends EventEmitter {
     };
 
     this.on("attackedTarget", this.shieldToggleListener);
+    return true;
   }
 
   rotate() {
@@ -716,10 +721,10 @@ export class SwordPvp extends EventEmitter {
 
     if (this.options.rotateConfig.mode === "constant") {
       lookFunc(bodyCenter);
-      return;
+      return true;
     }
 
-    if (this.ticksToNextAttack !== -1) return;
+    if (this.ticksToNextAttack !== -1) return false;
 
     switch (this.options.rotateConfig.mode) {
       case "legit":
@@ -736,6 +741,8 @@ export class SwordPvp extends EventEmitter {
       default:
         break;
     }
+
+    return true;
   }
 
   async reactionaryCrit(noTickLimit = false) {
