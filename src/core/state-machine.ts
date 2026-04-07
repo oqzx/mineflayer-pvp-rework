@@ -1,49 +1,50 @@
 import { EventEmitter } from 'events';
+import { BotStateMachine, getNestedMachine } from '@nxg-org/mineflayer-static-statemachine';
 import type { Bot } from 'mineflayer';
 import type { Entity } from 'prismarine-entity';
 import type { FullConfig } from '../config/types.js';
-import type { CombatPhase, CombatSnapshot, IncomingProjectile } from './combat-state.js';
+import type { CombatPhase, CombatSnapshot } from './combat-state.js';
 import { createSnapshot } from './combat-state.js';
 import { SwordCombat } from '../combat/sword-combat.js';
 import { ProjectileHandler } from '../projectile/projectile-handler.js';
-import { PearlHandler } from '../projectile/pearl-handler.js';
-import {
-  DodgeController,
-  classifyProjectile,
-  isHeadingToward,
-  estimateImpactTick,
-} from '../movement/dodge-controller.js';
+import { DodgeController, classifyProjectile, isHeadingToward, estimateImpactTick } from '../movement/dodge-controller.js';
 import { GapHandler } from '../tactics/gap-handler.js';
 import { HealthManager } from '../health/health-manager.js';
 import { PotionHandler } from '../health/potion-handler.js';
 import { TargetSelector } from '../multi-enemy/target-selector.js';
 import { TeamHandler } from '../multi-enemy/team-handler.js';
 import type { IDecisionAgent } from '../engine/agent-interface.js';
+import { createPvpData } from './pvp-data.js';
+import type { PvpData } from './pvp-data.js';
+import { IdleBehavior } from './behaviors/idle.js';
+import { buildTransitions } from './behaviors/transitions.js';
+import '@nxg-org/mineflayer-auto-buff';
 
 const DRAIN_LIMIT = 16;
 
-const MELEE_PHASES = new Set<CombatPhase>([
-  'engaging', 'combo', 'backing-off', 'critical-setup', 'stunned',
-]);
+const PHASE_NAME_MAP: Record<string, CombatPhase> = {
+  Idle: 'idle',
+  Engaging: 'engaging',
+  Combo: 'combo',
+  Stunned: 'stunned',
+  BackingOff: 'backing-off',
+  CriticalSetup: 'critical-setup',
+  Retreating: 'retreating',
+  BowCombat: 'bow-combat',
+  Dodging: 'dodging',
+  Eating: 'eating',
+  Pearling: 'pearling',
+};
 
 export class StateMachine extends EventEmitter {
   public phase: CombatPhase = 'idle';
   public snapshot: CombatSnapshot = createSnapshot();
 
-  private readonly sword: SwordCombat;
-  private readonly projectile: ProjectileHandler;
-  private readonly pearl: PearlHandler;
-  private readonly dodge: DodgeController;
-  private readonly gap: GapHandler;
+  private readonly data: PvpData;
+  private readonly botStateMachine: BotStateMachine<typeof IdleBehavior, []>;
   private readonly health: HealthManager;
-  private readonly potions: PotionHandler;
   private readonly targetSelector: TargetSelector;
-  private readonly team: TeamHandler;
-
-  private primaryTarget: Entity | undefined = undefined;
-  private manualTarget: Entity | undefined = undefined;
   private tick = 0;
-  private incomingProjectiles: IncomingProjectile[] = [];
 
   constructor(
     private readonly bot: Bot,
@@ -51,313 +52,148 @@ export class StateMachine extends EventEmitter {
     agents?: { decision?: IDecisionAgent },
   ) {
     super();
-    this.sword = new SwordCombat(bot, config, agents?.decision);
-    this.projectile = new ProjectileHandler(bot, config.bow, config.fireball);
-    this.pearl = new PearlHandler(config.pearl);
-    this.dodge = new DodgeController(config.dodge);
-    this.gap = new GapHandler(config.gap);
-    this.health = new HealthManager(bot, config.lowHealth);
-    this.potions = new PotionHandler(config.jumpBoost);
-    this.targetSelector = new TargetSelector(config.multiEnemy);
-    this.team = new TeamHandler(bot, config.teammates);
 
-    this.sword.on('attackedTarget', (t: Entity) => this.emit('attackedTarget', t));
-    this.sword.on('startedAttacking', (t: Entity) => this.emit('startedAttacking', t));
-    this.sword.on('stoppedAttacking', () => this.emit('stoppedAttacking'));
+    const sword = new SwordCombat(bot, config, agents?.decision);
+    const projectile = new ProjectileHandler(bot, config.bow, config.fireball);
+    const dodge = new DodgeController(config.dodge);
+    const health = new HealthManager(bot, config.lowHealth);
+    const gap = new GapHandler(config.gap);
+    const potions = new PotionHandler(config.jumpBoost);
+    const targetSelector = new TargetSelector(config.multiEnemy);
+    const team = new TeamHandler(bot, config.teammates);
 
-    this.health.on('lowHealth', () => this.onLowHealth());
+    this.health = health;
+    this.targetSelector = targetSelector;
 
-    this.bot.on('physicsTick', this.onTick);
-    this.bot.on('entitySpawn', this.onEntitySpawn);
-    this.bot.on('entityGone', this.onEntityGone);
+    this.data = createPvpData(
+      config, sword, projectile, dodge, health, gap, potions,
+      bot.autoBuff,
+      targetSelector, team,
+    );
+
+    sword.on('attackedTarget', (t: Entity) => this.emit('attackedTarget', t));
+    sword.on('startedAttacking', (t: Entity) => this.emit('startedAttacking', t));
+    sword.on('stoppedAttacking', () => this.emit('stoppedAttacking'));
+    health.on('lowHealth', () => this.onLowHealth());
+
+    const transitions = buildTransitions();
+    const rootMachine = getNestedMachine('CombatRoot', transitions, IdleBehavior).build();
+
+    this.botStateMachine = new BotStateMachine({
+      bot,
+      root: rootMachine,
+      data: this.data,
+      autoStart: false,
+      autoUpdate: false,
+    });
+
+    this.botStateMachine.on('stateEntered', (_type, _nested, stateCls) => {
+      const name = (stateCls as unknown as { stateName?: string }).stateName ?? '';
+      const mapped = PHASE_NAME_MAP[name];
+      if (mapped && mapped !== this.phase) {
+        this.phase = mapped;
+        this.data.snapshot = { ...this.data.snapshot, phase: mapped };
+        this.emit('phaseChanged', mapped);
+      }
+    });
+
+    bot.on('physicsTick', this.onTick);
+    bot.on('entityGone', this.onEntityGone);
+
+    this.botStateMachine.start(false);
   }
 
   attack(target: Entity): void {
-    this.manualTarget = target;
-    this.primaryTarget = target;
-    this.applyTransition('engaging');
-    this.drainTransitions();
+    this.data.entity = target;
+    this.data.sword.stop();
+    this.drainStateMachine();
   }
 
   stop(): void {
-    this.manualTarget = undefined;
-    this.primaryTarget = undefined;
-    this.sword.stop();
-    this.projectile.stop();
-    this.applyTransition('idle');
+    this.data.entity = undefined;
+    this.data.sword.stop();
+    this.data.projectile.stop();
+    this.drainStateMachine();
   }
 
   get currentTarget(): Entity | undefined {
-    return this.primaryTarget;
+    return this.data.entity;
   }
 
   private onTick = (): void => {
     this.tick++;
+    this.data.tick = this.tick;
     this.targetSelector.tick();
     this.scanProjectiles();
     this.updateSnapshot();
-    this.tickCurrentPhase();
-    this.drainTransitions();
+    this.maybeRerouteTarget();
+    this.botStateMachine.update();
   };
 
-  private tickCurrentPhase(): void {
-    switch (this.phase) {
-      case 'idle':
-        this.tickIdle();
-        break;
-      case 'engaging':
-      case 'combo':
-      case 'backing-off':
-      case 'critical-setup':
-      case 'stunned':
-        this.tickMelee();
-        break;
-      case 'retreating':
-        this.tickRetreating();
-        break;
-      case 'bow-combat':
-        this.tickBowCombat();
-        break;
-    }
-  }
-
-  private drainTransitions(): void {
+  private drainStateMachine(): void {
     for (let i = 0; i < DRAIN_LIMIT; i++) {
-      const next = this.resolveNextPhase();
-      if (next === null) break;
-      this.applyTransition(next);
+      const before = this.phase;
+      this.botStateMachine.update();
+      if (this.phase === before) break;
     }
   }
 
-  private resolveNextPhase(): CombatPhase | null {
-    const snap = this.snapshot;
+  private maybeRerouteTarget(): void {
+    if (!this.config.multiEnemy.enabled) return;
     const phase = this.phase;
-
-    if (this.incomingProjectiles.length > 0 && phase !== 'dodging') {
-      const proj = this.incomingProjectiles[0];
-      if (proj && proj.estimatedImpactTick - this.tick <= 4) return 'dodging';
-    }
-
-    if (phase === 'dodging' && this.incomingProjectiles.length === 0) {
-      return this.primaryTarget ? 'engaging' : 'idle';
-    }
-
-    if (phase === 'pearling' && !this.pearl.isThrowing) {
-      return this.primaryTarget ? 'engaging' : 'idle';
-    }
-
-    if (phase === 'eating' && !this.gap.isEating) {
-      return this.primaryTarget ? 'engaging' : 'idle';
-    }
-
-    if (this.health.isCritical && phase !== 'retreating' && phase !== 'eating') {
-      return 'retreating';
-    }
-
-    if (!this.primaryTarget && phase !== 'idle') {
-      return 'idle';
-    }
-
-    if (this.primaryTarget && phase === 'idle') {
-      return 'engaging';
-    }
-
-    if (
-      this.config.multiEnemy.enabled &&
-      phase !== 'retreating' &&
-      phase !== 'eating' &&
-      phase !== 'pearling'
-    ) {
-      const threats = this.targetSelector.getNearbyThreats(this.bot, this.config.generic.viewDistance);
-      const best = this.targetSelector.selectPrimary(this.bot, this.primaryTarget, threats, this.config.teammates);
-      if (best && best.id !== this.primaryTarget?.id) {
-        this.primaryTarget = best;
-        this.sword.stop();
-        return 'engaging';
-      }
-    }
-
-    if (MELEE_PHASES.has(phase) && this.primaryTarget) {
-      if (this.health.isLow && this.gap.shouldEat(this.bot, phase, snap.incomingProjectiles.length > 0)) {
-        return 'eating';
-      }
-
-      if (this.pearl.shouldThrowDefensive(this.bot)) {
-        return 'pearling';
-      }
-
-      if (
-        this.config.pearl.enabled &&
-        !snap.inRange &&
-        this.pearl.shouldThrowAggressive(this.bot, this.primaryTarget)
-      ) {
-        return 'pearling';
-      }
-
-      const dist = this.primaryTarget.position.distanceTo(this.bot.entity.position);
-      if (dist > this.config.generic.attackRange + 2 && this.config.bow.enabled) {
-        return 'bow-combat';
-      }
-    }
-
-    if (phase === 'retreating') {
-      if (!this.health.isLow) return 'engaging';
-      if (this.gap.shouldEat(this.bot, phase, false)) return 'eating';
-    }
-
-    if (phase === 'bow-combat' && this.primaryTarget) {
-      const dist = this.primaryTarget.position.distanceTo(this.bot.entity.position);
-      if (dist <= this.config.generic.attackRange + 1) return 'engaging';
-    }
-
-    if (this.primaryTarget && snap.inRange && snap.comboActive && phase === 'engaging') {
-      return 'combo';
-    }
-
-    if (this.primaryTarget && !snap.inRange && phase === 'combo') {
-      return 'engaging';
-    }
-
-    if (snap.ticksSinceHurt <= 3 && phase === 'combo') {
-      return 'stunned';
-    }
-
-    if (snap.ticksSinceHurt > 10 && phase === 'stunned') {
-      return 'combo';
-    }
-
-    return null;
-  }
-
-  private applyTransition(next: CombatPhase): void {
-    if (this.phase === next) return;
-    this.onExit(this.phase);
-    this.phase = next;
-    this.emit('phaseChanged', next);
-    this.onEnter(next);
-  }
-
-  private onExit(phase: CombatPhase): void {
-    if (phase === 'bow-combat') {
-      this.projectile.stop();
-    }
-  }
-
-  private onEnter(phase: CombatPhase): void {
-    switch (phase) {
-      case 'eating':
-        void this.gap.eat(this.bot);
-        break;
-      case 'pearling':
-        void this.startPearl();
-        break;
-      case 'dodging': {
-        const proj = this.incomingProjectiles[0];
-        if (proj) void this.dodge.handleIncoming(this.bot, proj);
-        break;
-      }
-      case 'retreating':
-        this.sword.stop();
-        break;
-    }
-  }
-
-  private tickIdle(): void {
-    if (this.manualTarget) return;
-
-    if (this.config.multiEnemy.assistTeammates) {
-      const struggling = this.team.getStruggling();
-      const first = struggling[0];
-      if (first?.nearestEnemy) {
-        this.primaryTarget = first.nearestEnemy;
-      }
-    }
-  }
-
-  private tickMelee(): void {
-    if (!this.primaryTarget) return;
-    if (!this.sword.target || this.sword.target.id !== this.primaryTarget.id) {
-      void this.sword.engage(this.primaryTarget);
-    }
-  }
-
-  private tickBowCombat(): void {
-    if (!this.primaryTarget) return;
-    if (!this.projectile.isActive) {
-      void this.projectile.engage(this.primaryTarget);
-    }
-  }
-
-  private tickRetreating(): void {
-    this.bot.setControlState('sprint', true);
-  }
-
-  private async startPearl(): Promise<void> {
-    if (!this.primaryTarget) return;
-
-    if (this.pearl.shouldThrowDefensive(this.bot)) {
-      void this.pearl.throwDefensive(this.bot, this.getActiveEnemies());
-    } else {
-      void this.pearl.throwAggressive(this.bot, this.primaryTarget);
+    if (phase === 'retreating' || phase === 'eating' || phase === 'pearling') return;
+    const threats = this.targetSelector.getNearbyThreats(this.bot, this.config.generic.viewDistance);
+    const best = this.targetSelector.selectPrimary(this.bot, this.data.entity, threats, this.config.teammates);
+    if (best && best.id !== this.data.entity?.id) {
+      this.data.entity = best;
+      this.data.sword.stop();
     }
   }
 
   private scanProjectiles(): void {
-    this.incomingProjectiles = [];
+    this.data.incomingProjectiles = [];
     for (const entity of Object.values(this.bot.entities)) {
       if (!entity || entity === this.bot.entity) continue;
       const type = classifyProjectile(entity);
       if (!type) continue;
       if (!isHeadingToward(entity, this.bot.entity)) continue;
       const impactTick = this.tick + estimateImpactTick(entity, this.bot.entity);
-      this.incomingProjectiles.push({
+      this.data.incomingProjectiles.push({
         entity,
         type,
         estimatedImpactTick: impactTick,
         impactPosition: entity.position.clone(),
       });
     }
-    this.incomingProjectiles.sort((a, b) => a.estimatedImpactTick - b.estimatedImpactTick);
+    this.data.incomingProjectiles.sort((a, b) => a.estimatedImpactTick - b.estimatedImpactTick);
   }
 
   private updateSnapshot(): void {
-    const partial = this.sword.buildSnapshot(this.tick);
-    this.snapshot = {
-      ...this.snapshot,
+    const partial = this.data.sword.buildSnapshot(this.tick);
+    this.data.snapshot = {
+      ...this.data.snapshot,
       ...partial,
       phase: this.phase,
-      target: this.primaryTarget,
-      targets: this.getActiveEnemies(),
-      incomingProjectiles: this.incomingProjectiles,
+      target: this.data.entity,
+      targets: this.targetSelector.getNearbyThreats(this.bot, this.config.generic.viewDistance),
+      incomingProjectiles: this.data.incomingProjectiles,
       tick: this.tick,
       botHealth: this.bot.health ?? 20,
     };
-  }
-
-  private getActiveEnemies(): Entity[] {
-    return this.targetSelector.getNearbyThreats(this.bot, this.config.generic.viewDistance);
+    this.snapshot = this.data.snapshot;
   }
 
   private onLowHealth(): void {
-    if (this.phase !== 'retreating' && this.phase !== 'eating' && this.phase !== 'pearling') {
-      if (this.config.jumpBoost.useForEscape && this.potions.shouldDrink(this.bot, 'escape')) {
-        void this.potions.drinkJumpBoost(this.bot);
-      }
+    if (this.phase === 'retreating' || this.phase === 'eating' || this.phase === 'pearling') return;
+    if (this.data.potions.shouldDrink(this.bot, 'escape') && this.config.jumpBoost.useForEscape) {
+      void this.data.potions.drinkJumpBoost(this.bot);
     }
   }
 
-  private onEntitySpawn = (entity: Entity): void => {
-    if (entity.name === 'ender_pearl') {
-      this.pearl.trackEnemyPearl(entity, this.tick);
-    }
-  };
-
   private onEntityGone = (entity: Entity): void => {
-    this.pearl.removeEnemyPearl(entity.id);
-    if (this.primaryTarget?.id === entity.id) {
-      this.primaryTarget = undefined;
-      this.sword.stop();
-      this.applyTransition('idle');
+    if (this.data.entity?.id === entity.id) {
+      this.data.entity = undefined;
+      this.data.sword.stop();
     }
   };
 }

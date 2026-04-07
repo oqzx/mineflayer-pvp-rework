@@ -1,11 +1,12 @@
 import type { Bot } from 'mineflayer';
 import type { Item } from 'prismarine-item';
 import type { JumpBoostConfig } from '../config/types.js';
+import type { AutoBuff } from '@nxg-org/mineflayer-auto-buff/lib/AutoBuff.js';
 
 export type PotionSituation = 'height-advantage' | 'escape' | 'tower' | 'general';
 
 export class PotionHandler {
-  private consuming: boolean = false;
+  private consuming = false;
 
   constructor(private readonly config: JumpBoostConfig) {}
 
@@ -29,16 +30,11 @@ export class PotionHandler {
     if (!this.config.enabled || this.consuming) return false;
     if (this.hasJumpBoostActive(bot)) return false;
     if (!this.findJumpBoostPotion(bot)) return false;
-
     switch (situation) {
-      case 'height-advantage':
-        return this.config.useForHeightAdvantage;
-      case 'escape':
-        return this.config.useForEscape;
-      case 'tower':
-        return this.config.useForTowering;
-      default:
-        return false;
+      case 'height-advantage': return this.config.useForHeightAdvantage;
+      case 'escape':           return this.config.useForEscape;
+      case 'tower':            return this.config.useForTowering;
+      default:                 return false;
     }
   }
 
@@ -54,5 +50,15 @@ export class PotionHandler {
     } finally {
       this.consuming = false;
     }
+  }
+
+  async applyStrengthIfAvailable(autoBuff: AutoBuff): Promise<void> {
+    if (autoBuff.hasBuff('strength') || !autoBuff.hasItemForBuff('strength')) return;
+    await autoBuff.applyEffectsToSelf('strength');
+  }
+
+  async applyRegenerationIfAvailable(autoBuff: AutoBuff): Promise<void> {
+    if (autoBuff.hasBuff('regeneration') || !autoBuff.hasItemForBuff('regeneration')) return;
+    await autoBuff.applyEffectsToSelf('regeneration');
   }
 }
