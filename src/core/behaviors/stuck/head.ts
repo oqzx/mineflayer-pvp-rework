@@ -1,14 +1,14 @@
 import { StateBehavior, getTransition, type StateMachineData } from '@nxg-org/mineflayer-static-statemachine'
 import type { Bot } from 'mineflayer'
+import type { Block } from 'prismarine-block'
 import {
-  StuckActionBehavior,
   breakCobweb,
   getFaceCobweb,
   isFinished,
+  StuckActionState,
   shouldBreakFaceCobweb,
   shouldStayInStuck,
 } from './shared.js'
-import { behaviors } from '@nxg-org/mineflayer-static-statemachine'
 
 export class StuckHeadAssessBehavior extends StateBehavior {
   static readonly stateName = 'StuckHeadAssess'
@@ -28,20 +28,19 @@ export class StuckHeadAssessBehavior extends StateBehavior {
   onStateExited(): void {}
 }
 
-export class StuckBreakCobwebBehavior extends StuckActionBehavior {
+export class StuckBreakCobwebBehavior extends StuckActionState<[Block | undefined]> {
   static readonly stateName = 'StuckBreakCobweb'
 
-  protected async runAction(): Promise<void> {
-    const faceCobweb = getFaceCobweb(this.bot)
+  protected async performAction(faceCobweb?: Block): Promise<void> {
     if (!faceCobweb) return
     await breakCobweb(this.bot, faceCobweb)
   }
 }
 
-export class StuckHeadMoveEscapeBehavior extends StuckActionBehavior {
+export class StuckHeadMoveEscapeBehavior extends StuckActionState {
   static readonly stateName = 'StuckHeadMoveEscape'
 
-  protected async runAction(): Promise<void> {
+  protected async performAction(): Promise<void> {
     this.bot.setControlState('back', true)
     this.bot.setControlState('forward', false)
     this.bot.setControlState('sprint', false)
@@ -57,6 +56,7 @@ export function buildHeadStuckTransitions(exitState: typeof StateBehavior) {
 
     getTransition('headAssessToBreakCobweb', StuckHeadAssessBehavior, StuckBreakCobwebBehavior)
       .setShouldTransition((state) => shouldBreakFaceCobweb(state.bot))
+      .setRuntimeEnterFn((state) => getFaceCobweb(state.bot))
       .build(),
 
     getTransition('headAssessToMoveEscape', StuckHeadAssessBehavior, StuckHeadMoveEscapeBehavior)

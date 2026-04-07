@@ -266,13 +266,6 @@ export function isStuck(bot: Bot): boolean {
   return getTrapKind(bot) !== undefined
 }
 
-export function shouldCollectPlacedWater(state: { data: StateMachineData }): boolean {
-  const data = dataOf(state)
-  if (!data.stuckWaterPlaced) return false
-  if (data.stuckWaterPlacedTick === undefined) return false
-  return data.tick - data.stuckWaterPlacedTick >= WATER_SETTLE_TICKS
-}
-
 export function shouldUseWaterForCobweb(bot: Bot): boolean {
   if (getTrapKind(bot) !== 'cobweb') return false
   if (getFaceCobweb(bot)) return false
@@ -304,45 +297,26 @@ export function shouldUseEmptyBucketForLava(bot: Bot): boolean {
 }
 
 export function shouldStayInStuck(state: { bot: Bot; data: StateMachineData }): boolean {
-  const data = dataOf(state)
-  const withinRecoveryHold = data.tick < data.stuckRecoveryHoldUntilTick
-  return isStuck(state.bot) || data.stuckWaterPlaced || withinRecoveryHold
-}
-
-export function hasPlacedWater(state: { data: StateMachineData }): boolean {
-  return dataOf(state).stuckWaterPlaced
+  return isStuck(state.bot)
 }
 
 export function enterStuckState(data: PvpData): void {
   data.sword.stop()
   data.projectile.stop()
-  data.stuckWaterPlaced = false
-  data.stuckWaterPlacedTick = undefined
-  data.stuckWaterPlacedPos = undefined
   data.stuckWaterFailedPlacements.clear()
-  data.stuckRecoveryHoldUntilTick = 0
   data.sword.bot.clearControlStates()
 }
 
 export function exitStuckState(data: PvpData): void {
-  data.stuckWaterPlaced = false
-  data.stuckWaterPlacedTick = undefined
-  data.stuckWaterPlacedPos = undefined
   data.stuckWaterFailedPlacements.clear()
-  data.stuckRecoveryHoldUntilTick = 0
   data.sword.bot.clearControlStates()
 }
 
-export abstract class StuckActionBehavior extends StateBehavior {
+export abstract class StuckActionState<Args extends unknown[] = []> extends StateBehavior {
   private finished = false
 
-  onStateEntered(): void {
-    const data = dataOf(this)
-    data.stuckRecoveryHoldUntilTick = data.tick + STUCK_RECOVERY_HOLD_TICKS
-    void this.runAction().finally(() => {
-      data.stuckRecoveryHoldUntilTick = data.tick + STUCK_RECOVERY_HOLD_TICKS
-      this.finished = true
-    })
+  onStateEntered(...args: Args): void {
+    void this.executeEntered(...args)
   }
 
   update(): void {}
@@ -353,5 +327,14 @@ export abstract class StuckActionBehavior extends StateBehavior {
 
   onStateExited(): void {}
 
-  protected abstract runAction(): Promise<void>
+  private async executeEntered(...args: Args): Promise<void> {
+    try {
+      await this.performAction(...args)
+    } finally {
+      await this.bot.waitForTicks(STUCK_RECOVERY_HOLD_TICKS)
+      this.finished = true
+    }
+  }
+
+  protected abstract performAction(...args: Args): Promise<void>
 }

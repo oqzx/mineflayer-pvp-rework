@@ -4,7 +4,6 @@ import type { PvpData } from '../../pvp-data.js'
 import {
   enterStuckState,
   exitStuckState,
-  hasPlacedWater,
   isFeetStuck,
   isFinished,
   isHeadStuck,
@@ -42,7 +41,7 @@ const stuckTransitions = [
     .build(),
 
   getTransition('assessToFeetAssess', StuckAssessBehavior, StuckFeetAssessBehavior)
-    .setShouldTransition((state) => isFeetStuck(state.bot) || hasPlacedWater(state))
+    .setShouldTransition((state) => isFeetStuck(state.bot))
     .build(),
 
   ...buildHeadStuckTransitions(behaviors.BehaviorExit),

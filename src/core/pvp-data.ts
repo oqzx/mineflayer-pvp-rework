@@ -27,11 +27,7 @@ export interface PvpData extends StateMachineData {
   targetSelector: TargetSelector
   team: TeamHandler
   tick: number
-  stuckWaterPlaced: boolean
-  stuckWaterPlacedTick: number | undefined
-  stuckWaterPlacedPos: Vec3 | undefined
   stuckWaterFailedPlacements: Set<string>
-  stuckRecoveryHoldUntilTick: number
   incomingProjectiles: IncomingProjectile[]
   snapshot: CombatSnapshot
 }
@@ -60,11 +56,7 @@ export function createPvpData(
     targetSelector,
     team,
     tick: 0,
-    stuckWaterPlaced: false,
-    stuckWaterPlacedTick: undefined,
-    stuckWaterPlacedPos: undefined,
     stuckWaterFailedPlacements: new Set<string>(),
-    stuckRecoveryHoldUntilTick: 0,
     incomingProjectiles: [],
     snapshot: createSnapshot(),
   }

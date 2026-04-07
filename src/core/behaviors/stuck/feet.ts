@@ -1,9 +1,10 @@
-import { StateBehavior, getTransition, behaviors, type StateMachineData } from '@nxg-org/mineflayer-static-statemachine'
+import { StateBehavior, getTransition, type StateMachineData } from '@nxg-org/mineflayer-static-statemachine'
 import type { Bot } from 'mineflayer'
 import type { Entity } from 'prismarine-entity'
+import { Vec3 } from 'vec3'
+import type { Block } from 'prismarine-block'
 import { holdJumpForNextTick } from '../../../util/jump-control.js'
 import {
-  StuckActionBehavior,
   breakCobweb,
   collectPlacedWater,
   dataOf,
@@ -13,12 +14,13 @@ import {
   pickUpLavaWithEmptyBucket,
   pickUpLavaWithWater,
   placeWaterNextToTrap,
-  shouldCollectPlacedWater,
+  StuckActionState,
   shouldBreakFloorCobweb,
   shouldStayInStuck,
   shouldUseEmptyBucketForLava,
   shouldUseWaterForCobweb,
   shouldUseWaterForLava,
+  WATER_SETTLE_TICKS,
 } from './shared.js'
 
 const PLAYER_ESCAPE_RANGE = 6
@@ -59,15 +61,20 @@ export class StuckFeetAssessBehavior extends StateBehavior {
   onStateExited(): void {}
 }
 
-export class StuckUseWaterBehavior extends StuckActionBehavior {
+export class StuckUseWaterBehavior extends StuckActionState<[Block | undefined]> {
   static readonly stateName = 'StuckUseWater'
+  private placedPos: Vec3 | undefined
 
-  protected async runAction(): Promise<void> {
+  getPlacedPos(): Vec3 | undefined {
+    return this.placedPos?.clone()
+  }
+
+  protected async performAction(floorTrap?: Block): Promise<void> {
     const data = dataOf(this)
     const trapKind = getTrapKind(this.bot)
+    this.placedPos = undefined
 
     if (trapKind === 'cobweb') {
-      const floorTrap = getFloorTrap(this.bot)
       if (!floorTrap) return
 
       const placedPos = await placeWaterNextToTrap(
@@ -77,43 +84,38 @@ export class StuckUseWaterBehavior extends StuckActionBehavior {
       )
       if (!placedPos) return
 
-      data.stuckWaterPlaced = true
-      data.stuckWaterPlacedTick = data.tick
-      data.stuckWaterPlacedPos = placedPos
+      this.placedPos = placedPos.clone()
       return
     }
 
     if (trapKind === 'lava') {
-      const lavaBlock = getFloorTrap(this.bot)
-      if (!lavaBlock) return
+      if (!floorTrap) return
 
-      const used = await pickUpLavaWithWater(this.bot, lavaBlock)
+      const used = await pickUpLavaWithWater(this.bot, floorTrap)
       if (!used) return
 
-      data.stuckWaterPlaced = true
-      data.stuckWaterPlacedTick = data.tick
-      data.stuckWaterPlacedPos = lavaBlock.position.clone()
+      this.placedPos = floorTrap.position.clone()
     }
   }
 }
 
-export class StuckUseBucketBehavior extends StuckActionBehavior {
+export class StuckUseBucketBehavior extends StuckActionState<[Block | undefined]> {
   static readonly stateName = 'StuckUseBucket'
 
-  protected async runAction(): Promise<void> {
-    const lavaBlock = getFloorTrap(this.bot)
+  protected async performAction(lavaBlock?: Block): Promise<void> {
     if (!lavaBlock) return
     await pickUpLavaWithEmptyBucket(this.bot, lavaBlock)
   }
 }
 
-export class StuckCollectWaterBehavior extends StuckActionBehavior {
+export class StuckCollectWaterBehavior extends StuckActionState<[Vec3 | undefined]> {
   static readonly stateName = 'StuckCollectWater'
 
-  protected async runAction(): Promise<void> {
+  protected async performAction(placedPos?: Vec3): Promise<void> {
     const data = dataOf(this)
-    const placedPos = data.stuckWaterPlacedPos
-    const collected = await collectPlacedWater(this.bot, data.stuckWaterPlacedPos)
+    await this.bot.waitForTicks(WATER_SETTLE_TICKS)
+
+    const collected = await collectPlacedWater(this.bot, placedPos)
     if (!collected) return
 
     const trapKind = getTrapKind(this.bot)
@@ -124,27 +126,22 @@ export class StuckCollectWaterBehavior extends StuckActionBehavior {
     if (cobwebStillAtFeet && placedPos) {
       data.stuckWaterFailedPlacements.add(placedPos.toString())
     }
-
-    data.stuckWaterPlaced = false
-    data.stuckWaterPlacedTick = undefined
-    data.stuckWaterPlacedPos = undefined
   }
 }
 
-export class StuckBreakFloorCobwebBehavior extends StuckActionBehavior {
+export class StuckBreakFloorCobwebBehavior extends StuckActionState<[Block | undefined]> {
   static readonly stateName = 'StuckBreakFloorCobweb'
 
-  protected async runAction(): Promise<void> {
-    const floorTrap = getFloorTrap(this.bot)
+  protected async performAction(floorTrap?: Block): Promise<void> {
     if (!floorTrap) return
     await breakCobweb(this.bot, floorTrap)
   }
 }
 
-export class StuckFeetMoveEscapeBehavior extends StuckActionBehavior {
+export class StuckFeetMoveEscapeBehavior extends StuckActionState {
   static readonly stateName = 'StuckFeetMoveEscape'
 
-  protected async runAction(): Promise<void> {
+  protected async performAction(): Promise<void> {
     const data = dataOf(this)
     const goLeft = data.tick % 12 < 6
     const dir = goLeft ? 'left' : 'right'
@@ -168,27 +165,31 @@ export function buildFeetStuckTransitions(exitState: typeof StateBehavior) {
       .setShouldTransition((state) => !shouldStayInStuck(state))
       .build(),
 
-    getTransition('feetAssessToCollectWater', StuckFeetAssessBehavior, StuckCollectWaterBehavior)
-      .setShouldTransition((state) => shouldCollectPlacedWater(state))
-      .build(),
-
     getTransition('feetAssessToUseWater', StuckFeetAssessBehavior, StuckUseWaterBehavior)
       .setShouldTransition((state) => {
         if (shouldUseWaterForCobweb(state.bot)) return true
         return shouldUseWaterForLava(state.bot)
       })
+      .setRuntimeEnterFn((state) => getFloorTrap(state.bot))
       .build(),
 
     getTransition('feetAssessToUseBucket', StuckFeetAssessBehavior, StuckUseBucketBehavior)
       .setShouldTransition((state) => shouldUseEmptyBucketForLava(state.bot))
+      .setRuntimeEnterFn((state) => getFloorTrap(state.bot))
       .build(),
 
     getTransition('feetAssessToBreakFloorCobweb', StuckFeetAssessBehavior, StuckBreakFloorCobwebBehavior)
       .setShouldTransition((state) => shouldBreakFloorCobweb(state.bot))
+      .setRuntimeEnterFn((state) => getFloorTrap(state.bot))
       .build(),
 
     getTransition('feetAssessToMoveEscape', StuckFeetAssessBehavior, StuckFeetMoveEscapeBehavior)
       .setShouldTransition((state) => shouldStayInStuck(state))
+      .build(),
+
+    getTransition('useWaterToCollectWater', StuckUseWaterBehavior, StuckCollectWaterBehavior)
+      .setShouldTransition((state) => isFinished(state) && state.getPlacedPos() !== undefined)
+      .setRuntimeEnterFn((state) => state.getPlacedPos())
       .build(),
 
     getTransition('collectWaterToFeetAssess', StuckCollectWaterBehavior, StuckFeetAssessBehavior)
@@ -196,7 +197,7 @@ export function buildFeetStuckTransitions(exitState: typeof StateBehavior) {
       .build(),
 
     getTransition('useWaterToFeetAssess', StuckUseWaterBehavior, StuckFeetAssessBehavior)
-      .setShouldTransition(isFinished)
+      .setShouldTransition((state) => isFinished(state) && state.getPlacedPos() === undefined)
       .build(),
 
     getTransition('useBucketToFeetAssess', StuckUseBucketBehavior, StuckFeetAssessBehavior)
