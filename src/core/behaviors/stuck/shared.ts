@@ -12,7 +12,6 @@ const LAVA_BLOCKS = new Set(['lava', 'flowing_lava'])
 const COBWEB_BLOCKS = new Set(['cobweb', 'web'])
 const WATER_BLOCKS = new Set(['water', 'flowing_water'])
 export const WATER_SETTLE_TICKS = 4
-const STUCK_RECOVERY_HOLD_TICKS = 3
 
 export function dataOf(state: { data: StateMachineData }): PvpData {
   return state.data as PvpData
@@ -331,7 +330,6 @@ export abstract class StuckActionState<Args extends unknown[] = []> extends Stat
     try {
       await this.performAction(...args)
     } finally {
-      await this.bot.waitForTicks(STUCK_RECOVERY_HOLD_TICKS)
       this.finished = true
     }
   }
