@@ -23,7 +23,7 @@
     "build": "tsc --project tsconfig.json",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
-    "lint:fix": "eslint . --fix --max-warnings 0",
+    "lint:fix": "eslint src --fix --max-warnings 0",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
     "prepublish": "npm run build"
