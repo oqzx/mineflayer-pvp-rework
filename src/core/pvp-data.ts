@@ -1,5 +1,6 @@
 import type { StateMachineData } from '@nxg-org/mineflayer-static-statemachine'
 import type { Entity } from 'prismarine-entity'
+import type { Vec3 } from 'vec3'
 import type { FullConfig } from '../config/types.js'
 import type { CombatSnapshot, IncomingProjectile } from './combat-state.js'
 import type { SwordCombat } from '../combat/sword-combat.js'
@@ -28,6 +29,9 @@ export interface PvpData extends StateMachineData {
   tick: number
   stuckWaterPlaced: boolean
   stuckWaterPlacedTick: number | undefined
+  stuckWaterPlacedPos: Vec3 | undefined
+  stuckWaterFailedPlacements: Set<string>
+  stuckRecoveryHoldUntilTick: number
   incomingProjectiles: IncomingProjectile[]
   snapshot: CombatSnapshot
 }
@@ -58,6 +62,9 @@ export function createPvpData(
     tick: 0,
     stuckWaterPlaced: false,
     stuckWaterPlacedTick: undefined,
+    stuckWaterPlacedPos: undefined,
+    stuckWaterFailedPlacements: new Set<string>(),
+    stuckRecoveryHoldUntilTick: 0,
     incomingProjectiles: [],
     snapshot: createSnapshot(),
   }

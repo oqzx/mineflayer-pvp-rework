@@ -2,7 +2,7 @@ import { StateBehavior, getTransition, type StateMachineData } from '@nxg-org/mi
 import type { Bot } from 'mineflayer'
 import {
   StuckActionBehavior,
-  breakFaceCobweb,
+  breakCobweb,
   getFaceCobweb,
   isFinished,
   shouldBreakFaceCobweb,
@@ -34,7 +34,7 @@ export class StuckBreakCobwebBehavior extends StuckActionBehavior {
   protected async runAction(): Promise<void> {
     const faceCobweb = getFaceCobweb(this.bot)
     if (!faceCobweb) return
-    await breakFaceCobweb(this.bot, faceCobweb)
+    await breakCobweb(this.bot, faceCobweb)
   }
 }
 
