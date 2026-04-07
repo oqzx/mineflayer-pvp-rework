@@ -837,7 +837,8 @@ export class SwordCombat extends EventEmitter {
     const pf = (this.bot as BotWithPathfinder).pathfinder
     if (!pf) return
     this.stopFollow()
-    this.followGoal = new goals.GoalFollow(this.target, this.config.follow.distance)
+    const predictTicks = this.config.follow.predictive ? this.config.follow.predictTicks : 0
+    this.followGoal = new FollowGoal(this.bot, this.target, this.config.follow.distance, predictTicks)
     this.followGoalTargetId = this.target.id
     pf.setGoal(this.followGoal, true)
   }
