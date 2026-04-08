@@ -14,6 +14,7 @@ export class CpsController {
   shouldAttack(currentTick: number, phase: CombatPhase, fatigueMultiplier = 1): boolean {
     const elapsed = currentTick - this.lastAttackTick
     if (elapsed < this.nextIntervalTicks) return false
+
     this.lastAttackTick = currentTick
     this.rollNextInterval(phase, fatigueMultiplier)
     return true
@@ -40,8 +41,9 @@ export class CpsController {
   }
 
   private rollNextInterval(phase: CombatPhase, fatigueMultiplier: number): void {
-    const range = phase === 'combo' ? this.config.comboRange : this.config.engagingRange
+    let range = phase === 'combo' ? this.config.comboRange : this.config.engagingRange
     const cps = Math.min(this.config.max, randomInRange(range)) * fatigueMultiplier
+
     this.rolledCps = cps
     const baseTicks = 20 / Math.max(0.5, cps)
     this.nextIntervalTicks = Math.max(1, Math.round(baseTicks))
