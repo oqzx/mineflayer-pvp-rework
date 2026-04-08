@@ -69,7 +69,7 @@ export class ShotPlanner {
     private shiftTargetPositions(target: AABBComponents, avgSpeed: Vec3, ...shotInfo: CheckShotInfo[]) {
         avgSpeed.y = 0;
         const newInfo = shotInfo.map((i) =>
-            i.shift ? target.position.clone().add(avgSpeed.scaled(i.ticks + 4)) : target.position
+            i.shift ? target.position.clone().add(avgSpeed.scaled(i.ticks)) : target.position
         ); //weird monkey patch.
         const allInfo: { target: AABBComponents; info: CheckShotInfo[] }[] = [];
         for (const position of newInfo) {
