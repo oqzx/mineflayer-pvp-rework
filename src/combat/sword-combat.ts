@@ -299,10 +299,8 @@ export class SwordCombat extends EventEmitter {
       this.config.jumpBoost.useForHeightAdvantage,
     )
 
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
-    this.checkShieldDisable().catch(() => {})
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
-    this.handleCrits().catch(() => {})
+    void this.checkShieldDisable().catch(() => {})
+    void this.handleCrits().catch(() => {})
 
     this.handleShieldToggle()
 
@@ -532,7 +530,13 @@ export class SwordCombat extends EventEmitter {
       this.wasVisible = false
       return
     }
-    this.wasVisible = this.bot.canSeeEntity(this.target)
+
+    const eyePos = this.bot.entity.position.offset(0, this.bot.entity.height * 0.9, 0)
+    const targetAABB = getEntityAABB(this.target)
+    const targetCenter = targetAABB.center()
+    
+    const block = this.bot.world.raycast(eyePos, targetCenter)
+    this.wasVisible = !block || (block.entity && block.entity.id === this.target.id)
   }
 
   private rotate(predFrame: PredictionFrame): void {
