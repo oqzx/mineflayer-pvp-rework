@@ -118,14 +118,17 @@ export function buildTransitions() {
   const pearlingToIdle = getTransition('pearlingToIdle', PearlingBehavior, IdleBehavior)
     .setShouldTransition((s) => (s as unknown as PearlingBehavior).isFinished() && !pvp(s).entity)
     .build()
-
+  
   const meleeToBow = getTransition('meleeToBow', [...MELEE], BowCombatBehavior)
     .setShouldTransition((s) => {
       const d = pvp(s)
       if (!canEnterBowCombat(d)) return false
       const target = d.entity
       if (!target) return false
-      return target.position.distanceTo(s.bot.entity.position) > d.config.generic.attackRange + 2
+      const dx = target.position.x - s.bot.entity.position.x
+      const dz = target.position.z - s.bot.entity.position.z
+      const hDist = Math.sqrt(dx * dx + dz * dz)
+      return hDist > 10
     })
     .build()
 
@@ -133,8 +136,11 @@ export function buildTransitions() {
     .setShouldTransition((s) => {
       const d = pvp(s)
       if (!d.entity) return false
-      if (!canEnterBowCombat(d)) return true;
-      return d.entity.position.distanceTo(s.bot.entity.position) <= d.config.generic.attackRange + 1
+      if (!canEnterBowCombat(d)) return true
+      const dx = d.entity.position.x - s.bot.entity.position.x
+      const dz = d.entity.position.z - s.bot.entity.position.z
+      const hDist = Math.sqrt(dx * dx + dz * dz)
+      return hDist <= 5
     })
     .build()
 
