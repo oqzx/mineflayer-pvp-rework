@@ -1,4 +1,8 @@
-import { StateBehavior, getTransition, type StateMachineData } from '@nxg-org/mineflayer-static-statemachine'
+import {
+  StateBehavior,
+  getTransition,
+  type StateMachineData,
+} from '@nxg-org/mineflayer-static-statemachine'
 import type { Bot } from 'mineflayer'
 import type { Block } from 'prismarine-block'
 import {

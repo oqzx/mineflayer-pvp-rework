@@ -222,9 +222,7 @@ export class SwordCombat extends EventEmitter {
     }
   }
 
-  private debugSnapshot(
-    cpsState = this.cps.getDebugState(this.currentTick),
-  ) {
+  private debugSnapshot(cpsState = this.cps.getDebugState(this.currentTick)) {
     return {
       target: this.target,
       phase: this.combo.state,
@@ -838,7 +836,12 @@ export class SwordCombat extends EventEmitter {
     if (!pf) return
     this.stopFollow()
     const predictTicks = this.config.follow.predictive ? this.config.follow.predictTicks : 0
-    this.followGoal = new FollowGoal(this.bot, this.target, this.config.follow.distance, predictTicks)
+    this.followGoal = new FollowGoal(
+      this.bot,
+      this.target,
+      this.config.follow.distance,
+      predictTicks,
+    )
     this.followGoalTargetId = this.target.id
     pf.setGoal(this.followGoal, true)
   }

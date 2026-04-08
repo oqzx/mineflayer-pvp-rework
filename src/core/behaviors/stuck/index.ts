@@ -1,4 +1,10 @@
-import { StateBehavior, getNestedMachine, getTransition, behaviors, type StateMachineData } from '@nxg-org/mineflayer-static-statemachine'
+import {
+  StateBehavior,
+  getNestedMachine,
+  getTransition,
+  behaviors,
+  type StateMachineData,
+} from '@nxg-org/mineflayer-static-statemachine'
 import type { Bot } from 'mineflayer'
 import type { PvpData } from '../../pvp-data.js'
 import {
