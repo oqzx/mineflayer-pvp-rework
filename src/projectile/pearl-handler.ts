@@ -1,9 +1,9 @@
+import { Vec3 } from 'vec3'
 import type { Bot } from 'mineflayer'
 import type { Entity } from 'prismarine-entity'
-import type { Vec3 } from 'vec3'
 import type { PearlConfig } from '../config/types.js'
-import { simulateProjectile, closestApproachTick } from './trajectory.js'
-import { VOID_DEPTH } from '../calc/constants.js'
+import { simulateProjectile, closestApproachTick, solvePitch, solveAimIterative } from './trajectory.js'
+import { VOID_DEPTH, MAX_PEARL_TICKS } from '../calc/constants.js'
 
 export type PearlUsageReason = 'aggressive' | 'escape-void' | 'escape-fall' | 'repositioning'
 
@@ -15,8 +15,8 @@ export type EnemyPearlPrediction = {
   estimatedLandPos: Vec3
 }
 
-function hasItemInInventory(bot: Bot, name: string): boolean {
-  return bot.inventory.items().some((i) => i.name === name)
+function hasEnderPearl(bot: Bot): boolean {
+  return bot.inventory.items().some((i) => i.name === 'ender_pearl')
 }
 
 function findSafeLanding(bot: Bot, searchRadius: number, avoidPositions: Vec3[]): Vec3 | null {
@@ -43,28 +43,23 @@ function findSafeLanding(bot: Bot, searchRadius: number, avoidPositions: Vec3[])
   )
 }
 
-function aimToPosition(origin: Vec3, target: Vec3): PearlAim | null {
-  const dx = target.x - origin.x
-  const dy = target.y - origin.y
-  const dz = target.z - origin.z
+function aimToStaticPosition(eyePos: Vec3, target: Vec3): PearlAim | null {
+  const dx = target.x - eyePos.x
+  const dy = target.y - eyePos.y
+  const dz = target.z - eyePos.z
   const hDist = Math.sqrt(dx * dx + dz * dz)
   const yaw = Math.atan2(dx, dz) + Math.PI
 
-  for (let pitch = -Math.PI / 2; pitch <= Math.PI / 4; pitch += Math.PI / 180) {
-    const sim = simulateProjectile(origin, yaw, pitch, 'ender_pearl', 80)
-    const closestTick = closestApproachTick(sim.points, target)
-    const pt = sim.points[closestTick - 1]
-    if (!pt) continue
-    if (pt.position.distanceTo(target) < 1.5) {
-      return { yaw, pitch, landingPos: pt.position.clone() }
-    }
-  }
+  const pitch = solvePitch(hDist, dy, 'ender_pearl')
+  if (pitch === null) return null
 
-  if (hDist > 0) {
-    const roughPitch = Math.atan2(dy, hDist) * 0.6
-    return { yaw, pitch: roughPitch, landingPos: target }
-  }
-  return null
+  const sim = simulateProjectile(eyePos, yaw, pitch, 'ender_pearl', MAX_PEARL_TICKS)
+  const closestTick = closestApproachTick(sim.points, target)
+  const pt = sim.points[closestTick - 1]
+
+  if (!pt || pt.position.distanceTo(target) > 3.5) return null
+
+  return { yaw, pitch, landingPos: pt.position.clone() }
 }
 
 function isAboveVoid(bot: Bot): boolean {
@@ -80,8 +75,12 @@ function estimateFallDamage(height: number): number {
   return Math.max(0, height - 3)
 }
 
+function getEyePos(bot: Bot): Vec3 {
+  return bot.entity.position.offset(0, bot.entity.height * 0.9, 0)
+}
+
 export class PearlHandler {
-  private throwing: boolean = false
+  private throwing = false
   private readonly enemyPearlPredictions = new Map<number, EnemyPearlPrediction>()
 
   constructor(private readonly config: PearlConfig) {}
@@ -91,12 +90,17 @@ export class PearlHandler {
   }
 
   trackEnemyPearl(entity: Entity, tick: number): void {
-    const sim = simulateProjectile(entity.position, entity.yaw, entity.pitch, 'ender_pearl', 80)
-    const finalPos = sim.finalPosition
+    const sim = simulateProjectile(
+      entity.position.offset(0, entity.height * 0.9, 0),
+      entity.yaw,
+      entity.pitch,
+      'ender_pearl',
+      MAX_PEARL_TICKS,
+    )
     this.enemyPearlPredictions.set(entity.id, {
       entity,
       estimatedLandTick: tick + sim.totalTicks,
-      estimatedLandPos: finalPos,
+      estimatedLandPos: sim.finalPosition,
     })
   }
 
@@ -110,20 +114,17 @@ export class PearlHandler {
 
   shouldThrowAggressive(bot: Bot, target: Entity): boolean {
     if (!this.config.enabled || this.throwing) return false
-    if (!hasItemInInventory(bot, 'ender_pearl')) return false
-    const dist = bot.entity.position.distanceTo(target.position)
-    return dist > this.config.aggressiveRange
+    if (!hasEnderPearl(bot)) return false
+    return bot.entity.position.distanceTo(target.position) > this.config.aggressiveRange
   }
 
   shouldThrowDefensive(bot: Bot): boolean {
     if (!this.config.defensiveEnabled || this.throwing) return false
-    if (!hasItemInInventory(bot, 'ender_pearl')) return false
+    if (!hasEnderPearl(bot)) return false
 
     if (isAboveVoid(bot) && bot.entity.velocity.y < -0.5) return true
 
-    const vel = bot.entity.velocity
-    const fallingFast = vel.y < -1.0
-    if (!fallingFast) return false
+    if (bot.entity.velocity.y >= -1.0) return false
 
     let height = 0
     for (let dy = -1; dy >= -20; dy--) {
@@ -134,30 +135,36 @@ export class PearlHandler {
       }
     }
 
-    const fallDamage = estimateFallDamage(height)
-    return fallDamage >= (bot.health ?? 20)
+    return estimateFallDamage(height) >= (bot.health ?? 20)
   }
 
   async throwAggressive(bot: Bot, target: Entity): Promise<boolean> {
-    const aim = aimToPosition(
-      bot.entity.position,
-      target.position.offset(0, target.height * 0.5, 0),
+    const eyePos = getEyePos(bot)
+    const targetVel = (target as Entity & { velocity?: Vec3 }).velocity ?? new Vec3(0, 0, 0)
+
+    const aim = solveAimIterative(
+      eyePos,
+      { position: target.position, velocity: targetVel, height: target.height },
+      'ender_pearl',
+      10,
     )
+
     if (!aim) return false
-    
-    return this.throw(bot, aim.yaw, aim.pitch)
+    return this.executeThrow(bot, aim.yaw, aim.pitch)
   }
 
   async throwDefensive(bot: Bot, enemies: Entity[]): Promise<boolean> {
+    const eyePos = getEyePos(bot)
     const enemyPositions = enemies.map((e) => e.position)
-    const safe = findSafeLanding(bot, this.config.safeLandingSearchRadius, enemyPositions)
-    if (!safe) return false
-    const aim = aimToPosition(bot.entity.position, safe)
+    const safePos = findSafeLanding(bot, this.config.safeLandingSearchRadius, enemyPositions)
+    if (!safePos) return false
+
+    const aim = aimToStaticPosition(eyePos, safePos.offset(0.5, 0.5, 0.5))
     if (!aim) return false
-    return this.throw(bot, aim.yaw, aim.pitch)
+    return this.executeThrow(bot, aim.yaw, aim.pitch)
   }
 
-  private async throw(bot: Bot, yaw: number, pitch: number): Promise<boolean> {
+  private async executeThrow(bot: Bot, yaw: number, pitch: number): Promise<boolean> {
     if (this.throwing) return false
     const pearl = bot.inventory.items().find((i) => i.name === 'ender_pearl')
     if (!pearl) return false
