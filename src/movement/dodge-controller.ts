@@ -13,27 +13,10 @@ export function classifyProjectile(entity: Entity): IncomingProjectile['type'] |
   const name = entity.name?.toLowerCase() ?? ''
   if (ARROW_ENTITY_NAMES.findIndex(p=>name.includes(p)) !== -1) return 'arrow'
   if (FIREBALL_ENTITY_NAMES.findIndex(p=>name.includes(p)) !== -1) return 'fireball'
-  if (name === 'ender_peal') return 'pearl'
+  if (name === 'ender_pearl') return 'pearl'
   return null
 }
 
-export function isHeadingToward(projectile: Entity, target: Entity, threshold = 1.5): boolean {
-  // vel is always zero.
-  const vel = projectile.velocity
-  const speed = vectorMagnitude(vel)
-  if (speed < 0.01) return false
-  const dir = new Vec3(vel.x / speed, vel.y / speed, vel.z / speed)
-  const toTarget = target.position.minus(projectile.position)
-  const dot = dir.x * toTarget.x + dir.y * toTarget.y + dir.z * toTarget.z
-  if (dot <= 0) return false
-  const cross = new Vec3(
-    dir.y * toTarget.z - dir.z * toTarget.y,
-    dir.z * toTarget.x - dir.x * toTarget.z,
-    dir.x * toTarget.y - dir.y * toTarget.x,
-  )
-  console.log(vectorMagnitude(cross))
-  return vectorMagnitude(cross) < threshold
-}
 
 export function estimateImpactTick(projectile: Entity, target: Entity): number {
   const speed = vectorMagnitude(projectile.velocity)

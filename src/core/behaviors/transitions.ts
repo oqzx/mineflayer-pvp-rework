@@ -145,7 +145,6 @@ export function buildTransitions() {
   const meleeToDodge = getTransition('meleeToDodge', [...MELEE], DodgeBehavior)
     .setShouldTransition((s) => {
       const d = pvp(s)
-      console.log(d.incomingProjectiles)
       if (d.incomingProjectiles.length === 0) return false
       const proj = d.incomingProjectiles[0]
       return proj !== undefined && proj.estimatedImpactTick - d.tick <= 4

@@ -10,8 +10,6 @@ import { ProjectileHandler } from '../projectile/projectile-handler.js'
 import {
   DodgeController,
   classifyProjectile,
-  isHeadingToward,
-  estimateImpactTick,
 } from '../movement/dodge-controller.js'
 import { GapHandler } from '../tactics/gap-handler.js'
 import { HealthManager } from '../health/health-manager.js'
@@ -84,6 +82,9 @@ export class StateMachine extends EventEmitter {
       targetSelector,
       team,
     )
+
+    this.bot.projectiles.detectIncomingProjectiles = true;
+    this.bot.projectiles.detectAimingEntities = true;
 
     sword.on('attackedTarget', (t: Entity) => this.emit('attackedTarget', t))
     sword.on('startedAttacking', (t: Entity) => this.emit('startedAttacking', t))
@@ -170,23 +171,21 @@ export class StateMachine extends EventEmitter {
   }
 
   private scanProjectiles(): void {
-    this.data.incomingProjectiles = []
-    for (const entity of Object.values(this.bot.entities)) {
-      if (!entity || entity === this.bot.entity) continue
-      const type = classifyProjectile(entity)
+    this.data.incomingProjectiles = this.bot.projectiles
+      .getIncomingProjectiles()
+      .map(({ entity, shotInfo }) => {
+      
+        const impactPosition =
+          shotInfo.intersectPos?.clone() ?? shotInfo.closestPoint?.clone() ?? entity.position.clone()
 
-      if (!type) continue
-      console.log(type, entity.name)
-      if (!isHeadingToward(entity, this.bot.entity)) continue
-      const impactTick = this.tick + estimateImpactTick(entity, this.bot.entity)
-      this.data.incomingProjectiles.push({
-        entity,
-        type,
-        estimatedImpactTick: impactTick,
-        impactPosition: entity.position.clone(),
+        return {
+          entity,
+          type: classifyProjectile(entity) ?? 'other',
+          estimatedImpactTick: this.tick + Math.max(0, Math.ceil(shotInfo.totalTicks)),
+          impactPosition,
+        }
       })
-    }
-    this.data.incomingProjectiles.sort((a, b) => a.estimatedImpactTick - b.estimatedImpactTick)
+      .sort((a, b) => a.estimatedImpactTick - b.estimatedImpactTick)
   }
 
   private updateSnapshot(): void {
