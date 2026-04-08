@@ -5,6 +5,7 @@ import type { FullConfig } from '../config/types.js'
 import type { AimingEntity, CombatSnapshot, IncomingProjectile } from './combat-state.js'
 import type { SwordCombat } from '../combat/sword-combat.js'
 import type { ProjectileHandler } from '../projectile/projectile-handler.js'
+import type { PearlHandler } from '../projectile/pearl-handler.js'
 import type { DodgeController } from '../movement/dodge-controller.js'
 import type { HealthManager } from '../health/health-manager.js'
 import type { GapHandler } from '../tactics/gap-handler.js'
@@ -19,6 +20,7 @@ export interface PvpData extends StateMachineData {
   config: FullConfig
   sword: SwordCombat
   projectile: ProjectileHandler
+  pearl: PearlHandler
   dodge: DodgeController
   health: HealthManager
   gap: GapHandler
@@ -37,6 +39,7 @@ export function createPvpData(
   config: FullConfig,
   sword: SwordCombat,
   projectile: ProjectileHandler,
+  pearl: PearlHandler,
   dodge: DodgeController,
   health: HealthManager,
   gap: GapHandler,
@@ -49,6 +52,7 @@ export function createPvpData(
     config,
     sword,
     projectile,
+    pearl,
     dodge,
     health,
     gap,
