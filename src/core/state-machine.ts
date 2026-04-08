@@ -7,7 +7,7 @@ import type { FullConfig } from '../config/types.js'
 import type { CombatPhase, CombatSnapshot } from './combat-state.js'
 import { createSnapshot } from './combat-state.js'
 import { SwordCombat } from '../combat/sword-combat.js'
-import { ProjectileHandler } from '../projectile/projectile-handler.js'
+import { ProjectileHandler } from '../projectile/projectile-handler'
 import { PearlHandler } from '../projectile/pearl-handler.js'
 import {
   DodgeController,
@@ -198,9 +198,12 @@ export class StateMachine extends EventEmitter {
       .map((info) => this.mapTrackedThreat(info))
       .sort((a, b) => a.estimatedImpactTick - b.estimatedImpactTick)
 
+  
     this.data.aimingEntities = this.bot.projectiles
       .getAimingEntities()
-      .map((info) => this.mapTrackedThreat(info))
+      .map((info) => {
+        return this.mapTrackedThreat(info)
+      })
       .sort((a, b) => a.estimatedImpactTick - b.estimatedImpactTick)
   }
 

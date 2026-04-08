@@ -25,7 +25,6 @@ import { WTapController } from '../movement/w-tap-controller.js'
 import { CriticalHandler } from '../tactics/critical-handler.js'
 import { BlockHitHandler } from '../tactics/block-hit.js'
 import { ShieldManager } from '../tactics/shield-manager.js'
-import { GapHandler } from '../tactics/gap-handler.js'
 import { HeightAdvantage } from '../tactics/height-advantage.js'
 import { SessionMemory } from '../adaptation/session-memory.js'
 import { StyleAdapter } from '../adaptation/style-adapter.js'
@@ -120,9 +119,7 @@ export class SwordCombat extends EventEmitter {
   private readonly crits: CriticalHandler
   private readonly blockHit: BlockHitHandler
   private readonly shield: ShieldManager
-  private readonly gapHandler: GapHandler
   private readonly height: HeightAdvantage
-  private isGapping = false
   private readonly memory: SessionMemory
   private readonly adapter: StyleAdapter
   private readonly decisionEngine: IDecisionAgent
@@ -156,7 +153,6 @@ export class SwordCombat extends EventEmitter {
     this.crits = new CriticalHandler(config.critical)
     this.blockHit = new BlockHitHandler(config.blockHit, config.lowHealth)
     this.shield = new ShieldManager(config.shield)
-    this.gapHandler = new GapHandler(config.gap)
     this.height = new HeightAdvantage()
     this.memory = new SessionMemory()
     this.adapter = new StyleAdapter(config.adaptation)
@@ -452,15 +448,6 @@ export class SwordCombat extends EventEmitter {
     const isLow = (this.bot.health ?? 20) <= this.config.lowHealth.threshold
 
     // Gap logic — run away first, eat, re-equip sword
-    if (
-      !this.isGapping &&
-      this.gapHandler.shouldEat(this.bot, 'engaging', this.ticksSinceTargetAttack < 6)
-    ) {
-      void this.executeGap()
-      return
-    }
-    if (this.isGapping) return
-
     const retreatDriven = blend.retreatWeight > 0.5
     let shouldApproach = !isLow || !this.config.lowHealth.preferBlockOverAttack
     if (retreatDriven) shouldApproach = false
@@ -634,10 +621,6 @@ export class SwordCombat extends EventEmitter {
   }
 
   private shouldHitSelect(predFrame: PredictionFrame): boolean {
-    if (this.isGapping) {
-      this.attackDebug.skip('gapping', this.debugSnapshot())
-      return false
-    }
     if (!this.target) {
       this.attackDebug.skip('missing_target', this.debugSnapshot())
       return false
@@ -866,29 +849,6 @@ export class SwordCombat extends EventEmitter {
     const held = this.bot.inventory.slots[this.bot.getEquipmentDestSlot('hand')]
     if (held?.name === weapon.name) return true
     return this.bot.util.inv.customEquip(weapon, 'hand')
-  }
-
-  private async executeGap(): Promise<void> {
-    if (this.isGapping) return
-    this.isGapping = true
-    this.stopFollow()
-
-    // Sprint away from enemy for ~1 second so they can't just kill you while eating
-    this.bot.setControlState('forward', false)
-    this.bot.setControlState('sprint', false)
-    this.bot.setControlState('back', true)
-    this.bot.setControlState('sprint', true)
-    await this.bot.waitForTicks(16)
-    this.bot.setControlState('back', false)
-    this.bot.setControlState('sprint', false)
-
-    await this.gapHandler.eat(this.bot)
-
-    this.isGapping = false
-
-    // Re-equip sword immediately after eating
-    const sword = this.findWeapon('sword') ?? this.findWeapon('axe')
-    if (sword) await this.equip(sword)
   }
 
   private startFollow(): void {

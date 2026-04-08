@@ -74,6 +74,7 @@ export const defaultConfig: FullConfig = {
   bow: {
     enabled: true,
     preferOverFireball: true,
+    aimBackend: 'shot-planner',
     leadIterations: 8,
     bridgeKnockbackEnabled: true,
   },

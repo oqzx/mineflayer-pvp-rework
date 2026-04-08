@@ -6,7 +6,8 @@ import type { PvpData } from '../pvp-data.js'
 export function canEnterBowCombat(data: PvpData): boolean {
   if (!data.config.bow.enabled) return false
   if (!data.entity) return false
-  return data.projectile.canEngage()
+
+  return data.projectile.canEngageTarget(data.entity)
 }
 
 export class BowCombatBehavior extends StateBehavior {
@@ -18,18 +19,21 @@ export class BowCombatBehavior extends StateBehavior {
 
   onStateEntered(): void {
     const d = this.data as PvpData
+    console.log("in combat", canEnterBowCombat(d))
     if (!canEnterBowCombat(d)) return
     const target = d.entity
     if (!target) return
+    void d.projectile.equipBestWeapon()
     void d.projectile.engage(target)
   }
 
   update(): void {
     const d = this.data as PvpData
+      console.log("in combat", canEnterBowCombat(d))
     if (!canEnterBowCombat(d)) return
     const target = d.entity
     if (!target) return
-    if (!d.projectile.isActive) {
+    if (!d.projectile.isActive()) {
       void d.projectile.engage(target)
     }
   }

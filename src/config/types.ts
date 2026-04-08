@@ -82,6 +82,7 @@ export type FollowConfig = {
 export type BowConfig = {
   enabled: boolean
   preferOverFireball: boolean
+  aimBackend: 'shot-planner' | 'bow-aiming'
   leadIterations: number
   bridgeKnockbackEnabled: boolean
 }

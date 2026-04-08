@@ -32,7 +32,7 @@ export class EatingBehavior extends StateBehavior {
     const d = this.data as PvpData
     const result = await this.tryInstantHealth(d)
     if (result !== Results.SUCCESS && result !== Results.ALREADY_BUFFED) {
-      await d.gap.eat(this.bot)
+      await d.gap.eat(this.bot, d.entity)
     }
     this.done = true
   }
