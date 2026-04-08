@@ -21,7 +21,8 @@ export class StunnedBehavior extends StateBehavior {
   }
 
   isFinished(): boolean {
-    return false
+    const d = this.data as PvpData
+    return d.snapshot.ticksSinceHurt > 5
   }
 
   onStateExited(): void {}
