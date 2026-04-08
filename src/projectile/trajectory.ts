@@ -73,17 +73,81 @@ export function closestApproachTick(points: TrajectoryPoint[], target: Vec3): nu
   return bestTick
 }
 
+function verticalAtHDist(
+  pitch: number,
+  hDist: number,
+  weaponName: string,
+): { v: number; tick: number } | null {
+  const sim = simulateProjectile(new Vec3(0, 0, 0), 0, pitch, weaponName, 200)
+  let prevH = 0
+  let prevV = 0
+
+  for (const pt of sim.points) {
+    const h = Math.sqrt(pt.position.x * pt.position.x + pt.position.z * pt.position.z)
+    if (h >= hDist) {
+      const dH = h - prevH
+      const frac = dH > 0 ? (hDist - prevH) / dH : 0.5
+      const v = prevV + (pt.position.y - prevV) * frac
+      return { v, tick: pt.tick }
+    }
+    prevH = h
+    prevV = pt.position.y
+  }
+  return null
+}
+
+function solvePitch(
+  hDist: number,
+  vDist: number,
+  weaponName: string,
+): number | null {
+  if (hDist < 0.001) return -Math.PI / 2
+
+  const maxCheck = verticalAtHDist(0, hDist, weaponName)
+  if (!maxCheck) return null
+
+  let lo = -Math.PI * 0.44
+  let hi = Math.PI * 0.44
+
+  const hiCheck = verticalAtHDist(hi, hDist, weaponName)
+  if (hiCheck && hiCheck.v < vDist) return null
+
+  for (let iter = 0; iter < 30; iter++) {
+    const mid = (lo + hi) * 0.5
+    const midCheck = verticalAtHDist(mid, hDist, weaponName)
+
+    if (!midCheck) {
+      hi = mid
+      continue
+    }
+
+    if (Math.abs(midCheck.v - vDist) < 0.05) {
+      return mid
+    }
+
+    if (midCheck.v < vDist) {
+      lo = mid
+    } else {
+      hi = mid
+    }
+  }
+
+  const finalPitch = (lo + hi) * 0.5
+  const finalCheck = verticalAtHDist(finalPitch, hDist, weaponName)
+  if (!finalCheck || Math.abs(finalCheck.v - vDist) > 2.0) return null
+  return finalPitch
+}
+
 export function solveAimIterative(
   origin: Vec3,
-  targetEntity: { position: Vec3; velocity: Vec3; height: number },
+  targetEntity: { position: Vec3; velocity: Vec3; height: number; acceleration?: Vec3 },
   weaponName: string,
-  iterations = 8,
+  iterations = 12,
 ): SolvedAim | null {
-  const info = trajectoryInfo[weaponName] ??
-    trajectoryInfo['bow'] ?? { v0: 3.0, g: 0.05, drag: 0.99 }
-  const hitboxCenter = targetEntity.position.offset(0, targetEntity.height * 0.5, 0)
+  const targetVel = targetEntity.velocity
+  const targetAcc = targetEntity.acceleration ?? new Vec3(0, 0, 0)
 
-  let predictedPos = hitboxCenter.clone()
+  let predictedPos = targetEntity.position.offset(0, targetEntity.height * 0.5, 0)
 
   for (let iter = 0; iter < iterations; iter++) {
     const dx = predictedPos.x - origin.x
@@ -92,19 +156,23 @@ export function solveAimIterative(
     const hDist = Math.sqrt(dx * dx + dz * dz)
     const yaw = Math.atan2(dx, dz) + Math.PI
 
-    const pitch = solvePitch(hDist, dy, info.v0, info.g, info.drag)
+    const pitch = solvePitch(hDist, dy, weaponName)
     if (pitch === null) return null
 
     const result = simulateProjectile(origin, yaw, pitch, weaponName, 200)
     const closestTick = closestApproachTick(result.points, predictedPos)
 
-    const targetVel = targetEntity.velocity
+    const t = closestTick
     predictedPos = targetEntity.position
       .offset(0, targetEntity.height * 0.5, 0)
-      .offset(targetVel.x * closestTick, targetVel.y * closestTick, targetVel.z * closestTick)
+      .offset(
+        targetVel.x * t + 0.5 * targetAcc.x * t * t,
+        targetVel.y * t + 0.5 * targetAcc.y * t * t,
+        targetVel.z * t + 0.5 * targetAcc.z * t * t,
+      )
 
     const pt = result.points[closestTick - 1]
-    if (pt && pt.position.distanceTo(predictedPos) < 0.5) {
+    if (pt && pt.position.distanceTo(predictedPos) < 0.15) {
       return {
         yaw,
         pitch,
@@ -119,7 +187,7 @@ export function solveAimIterative(
   const dz = predictedPos.z - origin.z
   const hDist = Math.sqrt(dx * dx + dz * dz)
   const yaw = Math.atan2(dx, dz) + Math.PI
-  const pitch = solvePitch(hDist, dy, info.v0, info.g, info.drag)
+  const pitch = solvePitch(hDist, dy, weaponName)
   if (pitch === null) return null
 
   const result = simulateProjectile(origin, yaw, pitch, weaponName, 200)
@@ -132,44 +200,6 @@ export function solveAimIterative(
     flightTicks: closestTick,
     impactPosition: pt?.position.clone() ?? predictedPos,
   }
-}
-
-function solvePitch(
-  hDist: number,
-  vDist: number,
-  v0: number,
-  gravity: number,
-  drag: number,
-): number | null {
-  if (hDist < 0.001) return Math.PI / 2
-
-  const g = gravity
-  const d = drag
-
-  const effectiveDrag = d < 1 ? (1 - Math.pow(d, 20)) / (1 - d) : 20
-  const horizFactor = (Math.pow(d, 1) * effectiveDrag) / 20
-  if (horizFactor <= 0) return null
-
-  for (let pitch = -Math.PI / 2; pitch <= Math.PI / 2; pitch += Math.PI / 360) {
-    const sim = simulateProjectile(new Vec3(0, 0, 0), 0, pitch, 'bow', 200)
-    for (const pt of sim.points) {
-      const simH = Math.sqrt(pt.position.x * pt.position.x + pt.position.z * pt.position.z)
-      if (Math.abs(simH - hDist) < 0.3 && Math.abs(pt.position.y - vDist) < 0.5) {
-        return pitch
-      }
-    }
-  }
-
-  const discriminant = v0 * v0 * v0 * v0 - g * (g * hDist * hDist + 2 * vDist * v0 * v0)
-
-  if (discriminant < 0) return null
-
-  const pitch1 = Math.atan((v0 * v0 - Math.sqrt(discriminant)) / (g * hDist))
-  const pitch2 = Math.atan((v0 * v0 + Math.sqrt(discriminant)) / (g * hDist))
-
-  if (!isNaN(pitch1) && pitch1 >= -Math.PI / 2 && pitch1 <= Math.PI / 2) return pitch1
-  if (!isNaN(pitch2) && pitch2 >= -Math.PI / 2 && pitch2 <= Math.PI / 2) return pitch2
-  return null
 }
 
 export function estimatePearlLandingPosition(origin: Vec3, yaw: number, pitch: number): Vec3 {
