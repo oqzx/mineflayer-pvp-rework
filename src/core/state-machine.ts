@@ -7,6 +7,7 @@ import type { CombatPhase, CombatSnapshot } from './combat-state.js'
 import { createSnapshot } from './combat-state.js'
 import { SwordCombat } from '../combat/sword-combat.js'
 import { ProjectileHandler } from '../projectile/projectile-handler.js'
+import { PearlHandler } from '../projectile/pearl-handler.js'
 import {
   DodgeController,
   classifyProjectile,
@@ -61,6 +62,7 @@ export class StateMachine extends EventEmitter {
 
     const sword = new SwordCombat(bot, config, agents?.decision)
     const projectile = new ProjectileHandler(bot, config.bow, config.fireball)
+    const pearl = new PearlHandler(config.pearl)
     const dodge = new DodgeController(config.dodge)
     const health = new HealthManager(bot, config.lowHealth)
     const gap = new GapHandler(config.gap)
@@ -75,6 +77,7 @@ export class StateMachine extends EventEmitter {
       config,
       sword,
       projectile,
+      pearl,
       dodge,
       health,
       gap,
@@ -84,8 +87,8 @@ export class StateMachine extends EventEmitter {
       team,
     )
 
-    this.bot.projectiles.detectIncomingProjectiles = true;
-    this.bot.projectiles.detectAimingEntities = true;
+    this.bot.projectiles.detectIncomingProjectiles = true
+    this.bot.projectiles.detectAimingEntities = true
 
     sword.on('attackedTarget', (t: Entity) => this.emit('attackedTarget', t))
     sword.on('startedAttacking', (t: Entity) => this.emit('startedAttacking', t))
