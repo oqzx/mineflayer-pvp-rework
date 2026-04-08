@@ -30,6 +30,12 @@ function needsHeal(s: AnyState): boolean {
   return hasGapple || hasHealthPotion
 }
 
+function logPearlTransitionDecision(s: AnyState, allowed: boolean, reason: string): void {
+  const d = pvp(s)
+  const targetId = d.entity?.id ?? 'none'
+  console.log(`[pearl-transition] tick=${d.tick} allowed=${allowed} reason=${reason} target=${targetId}`)
+}
+
 export function buildTransitions() {
   const stuckTransitions = buildStuckTransitions(IdleBehavior)
   const MELEE = [
@@ -101,18 +107,19 @@ export function buildTransitions() {
   const meleeToPearling = getTransition('meleeToPearling', [...MELEE], PearlingBehavior)
     .setShouldTransition((s) => {
       const d = pvp(s)
-      if (!d.config.pearl.enabled || !s.bot.ender.hasPearls()) return false
-      const snap = d.snapshot
-      if (d.config.pearl.defensiveEnabled && snap.incomingProjectiles.length > 0) return true
-      if (!snap.inRange && d.entity) {
-        return d.entity.position.distanceTo(s.bot.entity.position) > d.config.pearl.aggressiveRange
+      const reason = d.pearl.getPearlingDecisionReason(s.bot, d.entity)
+      const allowed = d.pearl.shouldEnterPearling(s.bot, d.entity)
+
+      if (allowed || reason.startsWith('tracker:')) {
+        logPearlTransitionDecision(s, allowed, reason)
       }
-      return false
+
+      return allowed
     })
     .build()
 
   const pearlingToEngaging = getTransition('pearlingToEngaging', PearlingBehavior, EngagingBehavior)
-    .setShouldTransition((s) => (s as unknown as PearlingBehavior).isFinished() && !!pvp(s).entity)
+    .setShouldTransition((s) => s.isFinished() && !!pvp(s).entity)
     .build()
 
   const pearlingToIdle = getTransition('pearlingToIdle', PearlingBehavior, IdleBehavior)

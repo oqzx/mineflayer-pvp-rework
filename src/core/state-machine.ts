@@ -2,6 +2,7 @@ import { EventEmitter } from 'events'
 import { BotStateMachine, getNestedMachine } from '@nxg-org/mineflayer-static-statemachine'
 import type { Bot } from 'mineflayer'
 import type { Entity } from 'prismarine-entity'
+import type { Vec3 } from 'vec3'
 import type { FullConfig } from '../config/types.js'
 import type { CombatPhase, CombatSnapshot } from './combat-state.js'
 import { createSnapshot } from './combat-state.js'
@@ -90,9 +91,21 @@ export class StateMachine extends EventEmitter {
     this.bot.projectiles.detectIncomingProjectiles = true
     this.bot.projectiles.detectAimingEntities = true
 
-    sword.on('attackedTarget', (t: Entity) => this.emit('attackedTarget', t))
-    sword.on('startedAttacking', (t: Entity) => this.emit('startedAttacking', t))
-    sword.on('stoppedAttacking', () => this.emit('stoppedAttacking'))
+    this.bot.ender.dvStep = 720;
+    this.bot.ender.epsilon = 1e-2;
+
+    sword.on('attackedTarget', (t: Entity) => {
+      console.log(`[event] tick=${this.tick} attackedTarget -> ${t.username ?? t.name ?? t.id}`)
+      this.emit('attackedTarget', t)
+    })
+    sword.on('startedAttacking', (t: Entity) => {
+      console.log(`[event] tick=${this.tick} startedAttacking -> ${t.username ?? t.name ?? t.id}`)
+      this.emit('startedAttacking', t)
+    })
+    sword.on('stoppedAttacking', () => {
+      console.log(`[event] tick=${this.tick} stoppedAttacking`)
+      this.emit('stoppedAttacking')
+    })
     health.on('lowHealth', () => this.onLowHealth())
 
     const transitions = buildTransitions()
@@ -112,11 +125,16 @@ export class StateMachine extends EventEmitter {
       if (mapped && mapped !== this.phase) {
         this.phase = mapped
         this.data.snapshot = { ...this.data.snapshot, phase: mapped }
+        console.log(`[event] tick=${this.tick} pvpPhaseChanged -> ${mapped}`)
         this.emit('phaseChanged', mapped)
       }
     })
 
     bot.on('physicsTick', this.onTick)
+    bot.on('move', this.onBotMove)
+    bot.on('forcedMove', this.onForcedMove)
+    bot.on('entitySpawn', this.onEntitySpawn)
+    bot.on('entityDead', this.onEntityGone)
     bot.on('entityGone', this.onEntityGone)
 
     this.botStateMachine.start(false)
@@ -221,7 +239,20 @@ export class StateMachine extends EventEmitter {
     }
   }
 
+  private onEntitySpawn = (entity: Entity): void => {
+    this.data.pearl.onEntitySpawn(this.bot, entity)
+  }
+
+  private onBotMove = (previousPosition: Vec3): void => {
+    this.data.pearl.onBotMove(this.bot, previousPosition)
+  }
+
+  private onForcedMove = (): void => {
+    this.data.pearl.onForcedMove(this.bot)
+  }
+
   private onEntityGone = (entity: Entity): void => {
+    this.data.pearl.onEntityGone(this.bot, entity)
     if (this.data.entity?.id === entity.id) {
       delete this.data.entity
       this.data.sword.stop()

@@ -14,6 +14,8 @@ export class PearlingBehavior extends StateBehavior {
 
   onStateEntered(): void {
     this.done = false
+    const d = this.data as PvpData
+    console.log(`[pearling-state] enter tick=${d.tick} target=${d.entity?.id ?? 'none'}`)
     void this.executePearl()
   }
 
@@ -24,12 +26,15 @@ export class PearlingBehavior extends StateBehavior {
   }
 
   onStateExited(): void {
+    const d = this.data as PvpData
+    console.log(`[pearling-state] exit tick=${d.tick} target=${d.entity?.id ?? 'none'}`)
     this.done = false
   }
 
   private async executePearl(): Promise<void> {
     const d = this.data as PvpData
 
+    console.log(`[pearling-state] execute start tick=${d.tick} target=${d.entity?.id ?? 'none'}`)
     if (d.pearl.shouldThrowDefensive(this.bot)) {
       const threats = d.targetSelector.getNearbyThreats(this.bot, d.config.generic.viewDistance)
       await d.pearl.throwDefensive(this.bot, threats)
@@ -37,6 +42,7 @@ export class PearlingBehavior extends StateBehavior {
       await d.pearl.throwAggressive(this.bot, d.entity)
     }
 
+    console.log(`[pearling-state] execute end tick=${d.tick} target=${d.entity?.id ?? 'none'}`)
     this.done = true
   }
 }
