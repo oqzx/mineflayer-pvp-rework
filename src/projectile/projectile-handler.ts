@@ -99,6 +99,7 @@ export class ProjectileHandler {
     if (this.engagingTargetId === targetId) return
 
     this.stop()
+    this.aiming.reset()  // Reset predictor for new target
     this.engagingTargetId = targetId
 
     this.weapon = getBestRangedWeapon(this.bot, this.bowConfig.preferOverFireball)
