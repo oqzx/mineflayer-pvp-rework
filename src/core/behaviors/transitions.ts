@@ -115,8 +115,8 @@ export function buildTransitions() {
   const meleeToPearling = getTransition('meleeToPearling', [...MELEE], PearlingBehavior)
     .setShouldTransition((s) => {
       const d = pvp(s)
-      const reason = d.pearl.getPearlingDecisionReason(s.bot, d.entity)
-      const allowed = d.pearl.shouldEnterPearling(s.bot, d.entity)
+      const reason = d.pearl.getPearlingDecisionReason(s.bot, d.entity, d.health.isLow)
+      const allowed = d.pearl.shouldEnterPearling(s.bot, d.entity, d.health.isLow)
 
       if (allowed || reason.startsWith('tracker:')) {
         logPearlTransitionDecision(s, allowed, reason)
@@ -166,6 +166,7 @@ export function buildTransitions() {
   const meleeToDodge = getTransition('meleeToDodge', [...MELEE], DodgeBehavior)
     .setShouldTransition((s) => {
       const d = pvp(s)
+      // this is wrong
       if (d.aimingEntities.length === 0) return false
       const threat = d.aimingEntities[0]
       return threat !== undefined && threat.estimatedImpactTick - d.tick <= 4

@@ -13,6 +13,7 @@ export class EngagingBehavior extends StateBehavior {
   onStateEntered(): void {
     const d = this.data as PvpData
     if (!d.entity) return
+    void d.sword.equipBestWeapon()
     void d.sword.engage(d.entity)
   }
 
@@ -27,6 +28,7 @@ export class EngagingBehavior extends StateBehavior {
   isFinished(): boolean {
     return false
   }
+
 
   onStateExited(): void {}
 }

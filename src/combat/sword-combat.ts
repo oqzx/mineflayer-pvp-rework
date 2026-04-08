@@ -185,8 +185,7 @@ export class SwordCombat extends EventEmitter {
     this.fittsTracker.reset()
     this.bot.tracker.trackEntity(target)
     this.bot.tracker.trackEntity(this.bot.entity)
-    const weapon = this.findWeapon()
-    if (weapon) await this.equip(weapon)
+    await this.equipBestWeapon()
     this.fatigueManager.reset()
     this.behaviorBlend.reset()
     this.emit('startedAttacking', target)
@@ -207,6 +206,11 @@ export class SwordCombat extends EventEmitter {
     this.stopFollow()
     this.bot.clearControlStates()
     this.emit('stoppedAttacking')
+  }
+
+  async equipBestWeapon(): Promise<void> {
+      const weapon = this.findWeapon()
+    if (weapon) await this.equip(weapon)
   }
 
   botReach(): number {

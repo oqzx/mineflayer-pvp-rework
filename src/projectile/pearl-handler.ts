@@ -58,6 +58,10 @@ type AggressivePearlPlan = {
   pitch: number
 }
 
+type EscapePearlPlan = {
+  block: Block
+}
+
 export class PearlHandler {
   private throwing = false
   private readonly tracker = ThrownPearlTracker.instance
@@ -81,11 +85,11 @@ export class PearlHandler {
     return !this.throwing && this.tracker.canStartThrow(bot) && bot.ender.hasPearls()
   }
 
-  shouldEnterPearling(bot: Bot, target?: Entity): boolean {
-    return this.getPearlingPlanType(bot, target) !== null
+  shouldEnterPearling(bot: Bot, target?: Entity, lowHealth = false): boolean {
+    return this.getPearlingPlanType(bot, target, lowHealth) !== null
   }
 
-  getPearlingDecisionReason(bot: Bot, target?: Entity): string {
+  getPearlingDecisionReason(bot: Bot, target?: Entity, lowHealth = false): string {
     if (!this.config.enabled) return 'disabled'
     if (!bot.ender.hasPearls()) return 'no-pearls'
     if (this.throwing) return 'handler-throwing'
@@ -97,6 +101,12 @@ export class PearlHandler {
     if (defensiveBlock) return `defensive:block=${defensiveBlock.position}`
 
     if (!target) return 'no-target'
+
+    const escapePlan = lowHealth ? this.getEscapePlan(bot, target) : null
+    if (escapePlan) {
+      const distance = bot.entity.position.distanceTo(target.position)
+      return `escape:distance=${distance.toFixed(2)} block=${escapePlan.block.position}`
+    }
 
     const aggressiveShot = this.getAggressiveShot(bot, target)
     if (aggressiveShot) {
@@ -115,6 +125,11 @@ export class PearlHandler {
 
   shouldThrowDefensive(bot: Bot): boolean {
     return this.getDefensiveLandingBlock(bot) !== null
+  }
+
+  shouldThrowEscape(bot: Bot, enemy: Entity | null): boolean {
+    if (!enemy) return false
+    return this.getEscapePlan(bot, enemy) !== null
   }
 
   async throwAggressive(bot: Bot, target: Entity): Promise<boolean> {
@@ -148,6 +163,23 @@ export class PearlHandler {
     return await this.executeThrow(bot, async () => {
       const result = await bot.ender.pearl(safeBlock)
       console.log(`[pearl-handler] defensive end result=${result}`)
+      return result
+    })
+  }
+
+  async throwEscape(bot: Bot, enemy: Entity): Promise<boolean> {
+    const plan = this.getEscapePlan(bot, enemy)
+    if (!plan) {
+      console.log(`[pearl-handler] escape aborted enemy=${enemy.id} reason=no-safe-block phase=${this.getTrackerPhase(bot)}`)
+      return false
+    }
+
+    console.log(
+      `[pearl-handler] escape start enemy=${enemy.id} enemyDist=${bot.entity.position.distanceTo(enemy.position).toFixed(2)} block=${plan.block.position}`,
+    )
+    return await this.executeThrow(bot, async () => {
+      const result = await bot.ender.pearl(plan.block)
+      console.log(`[pearl-handler] escape end enemy=${enemy.id} result=${result}`)
       return result
     })
   }
@@ -191,8 +223,9 @@ export class PearlHandler {
     this.enemyPearlPredictions.delete(entityId)
   }
 
-  private getPearlingPlanType(bot: Bot, target?: Entity): 'defensive' | 'aggressive' | null {
+  private getPearlingPlanType(bot: Bot, target?: Entity, lowHealth = false): 'defensive' | 'escape' | 'aggressive' | null {
     if (this.getDefensiveLandingBlock(bot)) return 'defensive'
+    if (lowHealth && target && this.getEscapePlan(bot, target)) return 'escape'
     if (target && this.getAggressiveShot(bot, target)) return 'aggressive'
     return null
   }
@@ -230,6 +263,50 @@ export class PearlHandler {
       this.config.safeLandingSearchRadius,
       enemies.map((enemy) => enemy.position),
     )
+  }
+
+  private getEscapePlan(bot: Bot, enemy: Entity): EscapePearlPlan | null {
+    if (!this.config.enabled || !this.canThrowPearl(bot)) return null
+
+    const distance = bot.entity.position.distanceTo(enemy.position)
+    if (distance >= 8) return null
+
+    const away = bot.entity.position.minus(enemy.position)
+    const horizontalAway = new Vec3(away.x, 0, away.z)
+    if (horizontalAway.norm() < 1e-6) return null
+
+    const awayDir = horizontalAway.normalize()
+    const jitters = [-2, 0, 2]
+
+    for (let dist = 8; dist <= 20; dist += 4) {
+      for (let yOff = 0; yOff <= 4; yOff++) {
+        for (const xJitter of jitters) {
+          for (const zJitter of jitters) {
+            const candidate = bot.entity.position.offset(
+              awayDir.x * dist + xJitter,
+              yOff,
+              awayDir.z * dist + zJitter,
+            )
+            const ground = bot.blockAt(candidate.offset(0, -1, 0))
+            const air1 = bot.blockAt(candidate)
+            const air2 = bot.blockAt(candidate.offset(0, 1, 0))
+            if (!ground || ground.name === 'air') continue
+            if (air1?.name !== 'air' || air2?.name !== 'air') continue
+
+            const shot = bot.ender.shotToBlock(ground)
+            if (!shot?.hit) continue
+            return { block: ground }
+          }
+        }
+      }
+    }
+
+    const fallback = findSafeLandingBlock(bot, this.config.safeLandingSearchRadius, [enemy.position])
+    if (!fallback) return null
+
+    const fallbackShot = bot.ender.shotToBlock(fallback)
+    if (!fallbackShot?.hit) return null
+    return { block: fallback }
   }
 
   private async executeThrow(bot: Bot, action: () => Promise<boolean | void>): Promise<boolean> {

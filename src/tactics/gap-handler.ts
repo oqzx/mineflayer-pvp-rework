@@ -1,6 +1,7 @@
 import type { Bot } from 'mineflayer'
 import type { Item } from 'prismarine-item'
 import type { GapConfig } from '../config/types.js'
+import { CombatPhase } from '../index.js'
 
 export class GapHandler {
   private eating: boolean = false
