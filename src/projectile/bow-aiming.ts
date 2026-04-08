@@ -10,6 +10,94 @@ export type AimResult = SolvedAim & {
   knockbackDir?: Vec3
 }
 
+type PositionSample = { pos: Vec3; tick: number }
+
+class TargetPredictor {
+  private readonly history: PositionSample[] = []
+  private readonly maxSamples = 8
+
+  record(pos: Vec3, tick: number): void {
+    const last = this.history[this.history.length - 1]
+    if (last && last.tick === tick) {
+      last.pos = pos.clone()
+      return
+    }
+    this.history.push({ pos: pos.clone(), tick })
+    if (this.history.length > this.maxSamples) this.history.shift()
+  }
+
+  getKinematics(): { velocity: Vec3; acceleration: Vec3 } {
+    const zero = new Vec3(0, 0, 0)
+    if (this.history.length < 2) return { velocity: zero, acceleration: zero }
+
+    const velocities: Vec3[] = []
+    for (let i = this.history.length - 1; i >= 1; i--) {
+      const cur = this.history[i]!
+      const prev = this.history[i - 1]!
+      const dt = cur.tick - prev.tick
+      if (dt <= 0) continue
+      velocities.push(cur.pos.minus(prev.pos).scaled(1 / dt))
+    }
+
+    if (velocities.length === 0) return { velocity: zero, acceleration: zero }
+
+    let totalWeight = 0
+    const smoothedVel = new Vec3(0, 0, 0)
+    for (let i = 0; i < velocities.length; i++) {
+      const w = Math.pow(2, i)
+      const v = velocities[i]!
+      smoothedVel.x += v.x * w
+      smoothedVel.y += v.y * w
+      smoothedVel.z += v.z * w
+      totalWeight += w
+    }
+    smoothedVel.x /= totalWeight
+    smoothedVel.y /= totalWeight
+    smoothedVel.z /= totalWeight
+
+    let acceleration = zero
+    if (velocities.length >= 2) {
+      const dv = velocities[0]!.minus(velocities[1]!)
+      const accMag = Math.sqrt(dv.x * dv.x + dv.y * dv.y + dv.z * dv.z)
+      const maxAcc = 0.08
+      if (accMag > maxAcc) {
+        acceleration = dv.scaled(maxAcc / accMag)
+      } else {
+        acceleration = dv
+      }
+    }
+
+    return { velocity: smoothedVel, acceleration }
+  }
+
+  predictPosition(currentPos: Vec3, flightTicks: number): Vec3 {
+    const { velocity: vel, acceleration: acc } = this.getKinematics()
+    const t = Math.min(flightTicks, 25)
+
+    const kinematic = currentPos.offset(
+      vel.x * t + 0.5 * acc.x * t * t,
+      vel.y * t + 0.5 * acc.y * t * t,
+      vel.z * t + 0.5 * acc.z * t * t,
+    )
+
+    if (this.history.length < 4) {
+      const linear = currentPos.offset(vel.x * t, vel.y * t, vel.z * t)
+      const blend = (this.history.length - 2) / 2
+      return new Vec3(
+        linear.x + (kinematic.x - linear.x) * blend,
+        linear.y + (kinematic.y - linear.y) * blend,
+        linear.z + (kinematic.z - linear.z) * blend,
+      )
+    }
+
+    return kinematic
+  }
+
+  reset(): void {
+    this.history.length = 0
+  }
+}
+
 function getEntityVelocity(bot: Bot, entity: Entity): Vec3 {
   return (
     (
@@ -66,16 +154,40 @@ export function computeKnockbackAim(
     eyePos,
     { position: offsetTarget, velocity: vel, height: target.height },
     weaponName,
-    6,
+    8,
   )
 }
 
 export class BowAiming {
+  private readonly predictor = new TargetPredictor()
+  private tick = 0
+  private lastTargetId: number | null = null
+
   constructor(private readonly config: BowConfig) {}
 
   compute(bot: Bot, target: Entity, weaponName: string): AimResult | null {
+    this.tick++
+
+    if (this.lastTargetId !== target.id) {
+      this.predictor.reset()
+      this.lastTargetId = target.id
+    }
+
+    this.predictor.record(target.position.clone(), this.tick)
+
     const eyePos = bot.entity.position.offset(0, bot.entity.height * 0.9, 0)
-    const vel = getEntityVelocity(bot, target)
+
+    const trackerVel = getEntityVelocity(bot, target)
+    const { velocity: histVel, acceleration } = this.predictor.getKinematics()
+
+    const hasTrackerVel = trackerVel.x !== 0 || trackerVel.y !== 0 || trackerVel.z !== 0
+    const vel = hasTrackerVel
+      ? new Vec3(
+          trackerVel.x * 0.4 + histVel.x * 0.6,
+          trackerVel.y * 0.4 + histVel.y * 0.6,
+          trackerVel.z * 0.4 + histVel.z * 0.6,
+        )
+      : histVel
 
     if (this.config.bridgeKnockbackEnabled) {
       const edgeDir = detectBridgeOrEdge(bot, target)
@@ -89,11 +201,21 @@ export class BowAiming {
 
     const aim = solveAimIterative(
       eyePos,
-      { position: target.position, velocity: vel, height: target.height },
+      {
+        position: target.position,
+        velocity: vel,
+        height: target.height,
+        acceleration,
+      },
       weaponName,
       this.config.leadIterations,
     )
 
     return aim ? { ...aim, weaponName } : null
+  }
+
+  reset(): void {
+    this.predictor.reset()
+    this.lastTargetId = null
   }
 }

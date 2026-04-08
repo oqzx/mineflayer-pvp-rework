@@ -3,6 +3,8 @@ import type { Bot, ControlState } from 'mineflayer'
 type JumpTracker = {
   touchVersion: number
   installed: boolean
+  releaseAtTick: number | null
+  tickCounter: number
 }
 
 type BotWithPatchedJump = Bot & {
@@ -17,6 +19,8 @@ function getTracker(bot: Bot): JumpTracker {
     tracker = {
       touchVersion: 0,
       installed: false,
+      releaseAtTick: null,
+      tickCounter: 0,
     }
     trackers.set(bot, tracker)
   }
@@ -33,6 +37,16 @@ function installJumpTracker(bot: BotWithPatchedJump): JumpTracker {
     original(state, value)
   }) as typeof bot.setControlState
 
+  bot.on('physicsTick', () => {
+    tracker.tickCounter++
+    if (tracker.releaseAtTick === null || tracker.tickCounter < tracker.releaseAtTick) return
+
+    tracker.releaseAtTick = null
+    if (bot.getControlState('jump')) {
+      bot.setControlState('jump', false)
+    }
+  })
+
   tracker.installed = true
   return tracker
 }
@@ -42,11 +56,5 @@ export function holdJumpForNextTick(bot: Bot): void {
   const tracker = installJumpTracker(trackedBot)
 
   trackedBot.setControlState('jump', true)
-  const heldVersion = tracker.touchVersion
-
-  void (async () => {
-    await trackedBot.waitForTicks(1)
-    if (tracker.touchVersion !== heldVersion) return
-    trackedBot.setControlState('jump', false)
-  })()
+  tracker.releaseAtTick = tracker.tickCounter + 1
 }

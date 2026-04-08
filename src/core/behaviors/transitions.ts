@@ -68,7 +68,15 @@ export function buildTransitions() {
     .build()
 
   const meleeToRetreat = getTransition('meleeToRetreat', [...MELEE], RetreatBehavior)
-    .setShouldTransition((s) => pvp(s).health.isCritical)
+    .setShouldTransition((s) => {
+      const d = pvp(s)
+      if (!d.health.isLow) return false
+      const hasPearl = s.bot.inventory.items().some((i: { name: string }) => i.name === 'ender_pearl')
+      if (hasPearl && d.config.pearl.enabled) return false
+      const hasGapple = d.gap.findGoldenApple(s.bot)
+      if (hasGapple) return false
+      return d.health.isCritical || d.health.current <= d.config.lowHealth.threshold
+    })
     .build()
 
   const retreatToEngaging = getTransition('retreatToEngaging', RetreatBehavior, EngagingBehavior)
@@ -101,9 +109,16 @@ export function buildTransitions() {
   const meleeToPearling = getTransition('meleeToPearling', [...MELEE], PearlingBehavior)
     .setShouldTransition((s) => {
       const d = pvp(s)
-      if (!d.config.pearl.enabled || !s.bot.ender.hasPearls()) return false
+      if (!d.config.pearl.enabled) return false
+      const hasPearl = s.bot.inventory.items().some((i: { name: string }) => i.name === 'ender_pearl')
+      if (!hasPearl) return false
       const snap = d.snapshot
       if (d.config.pearl.defensiveEnabled && snap.incomingProjectiles.length > 0) return true
+      if (d.health.isLow && d.health.current <= d.config.lowHealth.threshold) {
+        const hasGapple = d.gap.findGoldenApple(s.bot)
+        if (!hasGapple && d.entity) return true
+        if (d.health.isCritical) return true
+      }
       if (!snap.inRange && d.entity) {
         return d.entity.position.distanceTo(s.bot.entity.position) > d.config.pearl.aggressiveRange
       }
@@ -118,14 +133,17 @@ export function buildTransitions() {
   const pearlingToIdle = getTransition('pearlingToIdle', PearlingBehavior, IdleBehavior)
     .setShouldTransition((s) => (s as unknown as PearlingBehavior).isFinished() && !pvp(s).entity)
     .build()
-
+  
   const meleeToBow = getTransition('meleeToBow', [...MELEE], BowCombatBehavior)
     .setShouldTransition((s) => {
       const d = pvp(s)
       if (!canEnterBowCombat(d)) return false
       const target = d.entity
       if (!target) return false
-      return target.position.distanceTo(s.bot.entity.position) > d.config.generic.attackRange + 2
+      const dx = target.position.x - s.bot.entity.position.x
+      const dz = target.position.z - s.bot.entity.position.z
+      const hDist = Math.sqrt(dx * dx + dz * dz)
+      return hDist > 10
     })
     .build()
 
@@ -134,7 +152,10 @@ export function buildTransitions() {
       const d = pvp(s)
       if (!d.entity) return false
       if (!canEnterBowCombat(d)) return true
-      return d.entity.position.distanceTo(s.bot.entity.position) <= d.config.generic.attackRange + 1
+      const dx = d.entity.position.x - s.bot.entity.position.x
+      const dz = d.entity.position.z - s.bot.entity.position.z
+      const hDist = Math.sqrt(dx * dx + dz * dz)
+      return hDist <= 5
     })
     .build()
 
@@ -145,20 +166,18 @@ export function buildTransitions() {
   const meleeToDodge = getTransition('meleeToDodge', [...MELEE], DodgeBehavior)
     .setShouldTransition((s) => {
       const d = pvp(s)
-      if (d.incomingProjectiles.length === 0) return false
-      const proj = d.incomingProjectiles[0]
-      if (!proj) return false
-      const threshold = d.config.dodge.reactionDelay.max + 4 + 1
-      return proj.estimatedImpactTick - d.tick <= threshold
+      if (d.aimingEntities.length === 0) return false
+      const threat = d.aimingEntities[0]
+      return threat !== undefined && threat.estimatedImpactTick - d.tick <= 4
     })
     .build()
 
   const dodgeToEngaging = getTransition('dodgeToEngaging', DodgeBehavior, EngagingBehavior)
-    .setShouldTransition((s) => pvp(s).incomingProjectiles.length === 0 && !!pvp(s).entity)
+    .setShouldTransition((s) => pvp(s).aimingEntities.length === 0 && !!pvp(s).entity)
     .build()
 
   const dodgeToIdle = getTransition('dodgeToIdle', DodgeBehavior, IdleBehavior)
-    .setShouldTransition((s) => pvp(s).incomingProjectiles.length === 0 && !pvp(s).entity)
+    .setShouldTransition((s) => pvp(s).aimingEntities.length === 0 && !pvp(s).entity)
     .build()
 
   return [

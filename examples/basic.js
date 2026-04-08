@@ -16,6 +16,7 @@ const config = clone(defaultConfig);
 config.multiEnemy.enabled = false;
 config.multiEnemy.assistTeammates = false;
 let debugEnabled = true;
+let botTick = 0;
 
 bot.once("spawn", async () => {
   bot.physics.yawSpeed = 6000;
@@ -40,6 +41,17 @@ bot.once("spawn", async () => {
 bot.on("chat", (username, message) => {
   if (username === bot.username) return;
   void handleCommand(username, message);
+});
+
+bot.on("physicsTick", () => {
+  botTick += 1;
+});
+
+bot._client.on("packet", (data, meta) => {
+  // console.log(`[tick ${botTick}]`, meta);
+  // if (meta.name.includes("entity")) {
+  //   console.log(`[tick ${botTick}]`, bot.physicsCtx?.state, data);
+  // }
 });
 
 bot.on("kicked", (reason) => console.log("[kicked]", reason));

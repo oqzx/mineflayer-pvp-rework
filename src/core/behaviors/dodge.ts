@@ -12,8 +12,8 @@ export class DodgeBehavior extends StateBehavior {
 
   onStateEntered(): void {
     const d = this.data as PvpData
-    const proj = d.incomingProjectiles[0]
-    if (proj) void d.dodge.handleIncoming(this.bot, proj)
+    const threat = d.aimingEntities[0]
+    if (threat) void d.dodge.handleIncoming(this.bot, threat)
   }
 
   update(): void {}

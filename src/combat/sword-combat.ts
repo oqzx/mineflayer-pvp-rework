@@ -25,6 +25,7 @@ import { WTapController } from '../movement/w-tap-controller.js'
 import { CriticalHandler } from '../tactics/critical-handler.js'
 import { BlockHitHandler } from '../tactics/block-hit.js'
 import { ShieldManager } from '../tactics/shield-manager.js'
+import { GapHandler } from '../tactics/gap-handler.js'
 import { HeightAdvantage } from '../tactics/height-advantage.js'
 import { SessionMemory } from '../adaptation/session-memory.js'
 import { StyleAdapter } from '../adaptation/style-adapter.js'
@@ -45,7 +46,12 @@ const PI_HALF = Math.PI / 2
 const DEBUG_ATTACK_SKIPS = false
 
 type BotWithPathfinder = Bot & {
-  pathfinder: { setGoal(g: goals.Goal, dynamic: boolean): void; stop(): void }
+  pathfinder: {
+    goal: goals.Goal | null
+    setGoal(goal: goals.Goal | null, dynamic?: boolean): void
+    stop(): void
+    isMoving(): boolean
+  }
 }
 
 class FollowGoal extends goals.Goal {
@@ -114,7 +120,9 @@ export class SwordCombat extends EventEmitter {
   private readonly crits: CriticalHandler
   private readonly blockHit: BlockHitHandler
   private readonly shield: ShieldManager
+  private readonly gapHandler: GapHandler
   private readonly height: HeightAdvantage
+  private isGapping = false
   private readonly memory: SessionMemory
   private readonly adapter: StyleAdapter
   private readonly decisionEngine: IDecisionAgent
@@ -131,6 +139,8 @@ export class SwordCombat extends EventEmitter {
   private lookAwayTicksLeft = 0
   private overshootRecovering = false
   private kbCounterTicksLeft = 0
+  private shieldReequipArmed = false
+  private shieldReactivateAtTick: number | null = null
 
   constructor(
     public readonly bot: Bot,
@@ -146,6 +156,7 @@ export class SwordCombat extends EventEmitter {
     this.crits = new CriticalHandler(config.critical)
     this.blockHit = new BlockHitHandler(config.blockHit, config.lowHealth)
     this.shield = new ShieldManager(config.shield)
+    this.gapHandler = new GapHandler(config.gap)
     this.height = new HeightAdvantage()
     this.memory = new SessionMemory()
     this.adapter = new StyleAdapter(config.adaptation)
@@ -187,8 +198,11 @@ export class SwordCombat extends EventEmitter {
     this.lastTarget = this.target
     this.target = undefined
     this.kbCounterTicksLeft = 0
+    this.shieldReequipArmed = false
+    this.shieldReactivateAtTick = null
     this.fittsTracker.reset()
     this.combo.reset()
+    this.cps.resetHitStreak()
     this.strafe.clearDir(this.bot)
     this.stopFollow()
     this.bot.clearControlStates()
@@ -250,6 +264,7 @@ export class SwordCombat extends EventEmitter {
     this.ticksSinceLastTargetHurt++
 
     this.combo.update(this.ticksSinceLastHurt, this.ticksSinceLastTargetHit)
+    this.processShieldReactivate()
 
     const profile = this.memory.getOrCreate(this.target.id)
     const strategy = this.adapter.deriveStrategy(profile)
@@ -341,7 +356,7 @@ export class SwordCombat extends EventEmitter {
       return
     }
 
-    if (blendWeights.attackWeight <= 0.3) {
+    if (blendWeights.attackWeight <= 0.2) {
       this.attackDebug.skip('blend_weight_gate', this.debugSnapshot(), {
         attackWeight: blendWeights.attackWeight.toFixed(3),
       })
@@ -361,6 +376,7 @@ export class SwordCombat extends EventEmitter {
       targets: [],
       threatLevel: 'low',
       incomingProjectiles: [],
+      aimingEntities: [],
       tick: this.currentTick,
       botHealth: this.bot.health ?? 20,
       targetHealth: undefined,
@@ -403,15 +419,16 @@ export class SwordCombat extends EventEmitter {
     if (this.shield.isEquipped(this.bot) && this.config.shield.mode === 'legit') {
       this.bot.deactivateItem()
     }
-    const onAttacked = (): void => {
-      this.removeListener('attackedTarget', onAttacked)
-      void (async () => {
-        await bot.waitForTicks(3)
-        if (this.shield.isEquipped(this.bot)) this.bot.activateItem(true)
-      })()
+    this.shieldReequipArmed = true
+  }
+
+  private processShieldReactivate(): void {
+    if (this.shieldReactivateAtTick === null || this.currentTick < this.shieldReactivateAtTick) return
+
+    this.shieldReactivateAtTick = null
+    if (this.shield.isEquipped(this.bot)) {
+      this.bot.activateItem(true)
     }
-    const bot = this.bot
-    this.once('attackedTarget', onAttacked)
   }
 
   private doMove(strategy: CombatStrategy, blend: BlendWeights): void {
@@ -430,28 +447,24 @@ export class SwordCombat extends EventEmitter {
 
     const isLow = (this.bot.health ?? 20) <= this.config.lowHealth.threshold
 
-    if (this.combo.state === 'taking-damage') {
-      if (isLow && this.config.lowHealth.extendedBlockEnabled) {
-        void this.blockHit.executeExtended(this.bot)
-      } else if (this.config.blockHit.enabled && this.combo.shouldBlockHit()) {
-        void this.blockHit.execute(
-          this.bot,
-          !this.bot.supportFeature('doesntHaveOffHandSlot'),
-          isLow,
-        )
-      }
+    // Gap logic — run away first, eat, re-equip sword
+    if (
+      !this.isGapping &&
+      this.gapHandler.shouldEat(this.bot, 'engaging', this.ticksSinceTargetAttack < 6)
+    ) {
+      void this.executeGap()
+      return
     }
+    if (this.isGapping) return
 
     const retreatDriven = blend.retreatWeight > 0.5
     let shouldApproach = !isLow || !this.config.lowHealth.preferBlockOverAttack
-    if (this.ticksSinceLastHurt < 5 && this.kbCounterTicksLeft === 0) shouldApproach = false
-    if (this.combo.state === 'combo' && !strategy.prioritiseKb) shouldApproach = true
     if (retreatDriven) shouldApproach = false
 
     const tooClose = this.botReach() > this.config.generic.tooCloseRange
     shouldApproach = shouldApproach && tooClose
 
-    if (shouldTrigger(this.config.humanization.sprintToggleNoiseProbability) && shouldApproach) {
+    if (shouldTrigger(this.config.humanization.sprintToggleNoiseProbability * 0.5) && shouldApproach) {
       shouldApproach = false
     }
 
@@ -617,6 +630,10 @@ export class SwordCombat extends EventEmitter {
   }
 
   private shouldHitSelect(predFrame: PredictionFrame): boolean {
+    if (this.isGapping) {
+      this.attackDebug.skip('gapping', this.debugSnapshot())
+      return false
+    }
     if (!this.target) {
       this.attackDebug.skip('missing_target', this.debugSnapshot())
       return false
@@ -660,9 +677,10 @@ export class SwordCombat extends EventEmitter {
       return false
     }
 
-    const hitChanceBonus = predFrame.hitChanceEstimate > 0.5 ? 0.2 : 0
-    const exposureBonus = predFrame.exposureScore > 0.6 ? 0.15 : 0
-    const finalProbability = Math.min(1, 0.6 + hitChanceBonus + exposureBonus)
+    const hitChanceBonus = predFrame.hitChanceEstimate > 0.5 ? 0.25 : 0.1
+    const exposureBonus = predFrame.exposureScore > 0.6 ? 0.2 : 0.05
+    const comboBonus = this.combo.state === 'combo' ? 0.15 : 0
+    const finalProbability = Math.min(1, 0.78 + hitChanceBonus + exposureBonus + comboBonus)
     const finalRoll = Math.random()
     if (finalRoll >= finalProbability) {
       this.attackDebug.skip('final_attack_probability_gate', this.debugSnapshot(), {
@@ -746,7 +764,17 @@ export class SwordCombat extends EventEmitter {
     this.willBeFirstHit = false
     this.ticksSinceLastTargetHit = 0
     this.combo.recordHit()
+    this.cps.recordHit()
     this.strafe.recordHit()
+
+    // Block-hit: trigger after attacking, not when taking damage
+    if (this.config.blockHit.enabled && this.combo.shouldBlockHit()) {
+      void this.blockHit.execute(
+        this.bot,
+        !this.bot.supportFeature('doesntHaveOffHandSlot'),
+        (this.bot.health ?? 20) <= this.config.lowHealth.threshold,
+      )
+    }
 
     const fromAbove = this.bot.entity.position.y > target.position.y + 0.3
     const reach = this.botReach()
@@ -779,6 +807,11 @@ export class SwordCombat extends EventEmitter {
       this.config.humanization.wristFatigueCpsReduction,
     )
     const effectiveCps = Math.min(this.config.cps.max, humanCps)
+
+    if (this.shieldReequipArmed) {
+      this.shieldReequipArmed = false
+      this.shieldReactivateAtTick = this.currentTick + 3
+    }
 
     this.emit('attackedTarget', target)
     const held = this.bot.heldItem
@@ -831,22 +864,55 @@ export class SwordCombat extends EventEmitter {
     return this.bot.util.inv.customEquip(weapon, 'hand')
   }
 
+  private async executeGap(): Promise<void> {
+    if (this.isGapping) return
+    this.isGapping = true
+    this.stopFollow()
+
+    // Sprint away from enemy for ~1 second so they can't just kill you while eating
+    this.bot.setControlState('forward', false)
+    this.bot.setControlState('sprint', false)
+    this.bot.setControlState('back', true)
+    this.bot.setControlState('sprint', true)
+    await this.bot.waitForTicks(16)
+    this.bot.setControlState('back', false)
+    this.bot.setControlState('sprint', false)
+
+    await this.gapHandler.eat(this.bot)
+
+    this.isGapping = false
+
+    // Re-equip sword immediately after eating
+    const sword = this.findWeapon('sword') ?? this.findWeapon('axe')
+    if (sword) await this.equip(sword)
+  }
+
   private startFollow(): void {
     if (!this.target) return
-    if (this.followGoal && this.followGoalTargetId === this.target.id) return
     const pf = (this.bot as BotWithPathfinder).pathfinder
     if (!pf) return
-    this.stopFollow()
-    const predictTicks = this.config.follow.predictive ? this.config.follow.predictTicks : 0
-    this.followGoal = new FollowGoal(this.bot, this.target, this.config.follow.distance, predictTicks)
-    this.followGoalTargetId = this.target.id
-    pf.setGoal(this.followGoal, true)
+
+    const isSameTargetGoal = this.followGoalTargetId === this.target.id
+    if (!this.followGoal || !isSameTargetGoal) {
+      this.stopFollow()
+      const predictTicks = this.config.follow.predictive ? this.config.follow.predictTicks : 0
+      this.followGoal = new FollowGoal(this.bot, this.target, this.config.follow.distance, predictTicks)
+      this.followGoalTargetId = this.target.id
+    }
+
+    // Re-issue the goal if pathfinder was stopped or replaced while our cached goal still exists.
+    if (pf.goal !== this.followGoal) {
+      pf.setGoal(this.followGoal, true)
+    }
   }
 
   private stopFollow(): void {
-    if (!this.followGoal) return
     const pf = (this.bot as BotWithPathfinder).pathfinder
-    if (pf) pf.stop()
+    if (pf?.goal && this.followGoal && pf.goal === this.followGoal) {
+      pf.setGoal(null)
+    } else if (pf && this.followGoal && pf.isMoving()) {
+      pf.stop()
+    }
     this.followGoal = undefined
     this.followGoalTargetId = undefined
   }

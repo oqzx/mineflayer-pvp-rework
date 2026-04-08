@@ -7,6 +7,13 @@ import { randomIntInRange, shouldTrigger, gaussianNoise } from '../util/humanize
 
 type StrafeMode = 'circle' | 'random' | 'intelligent' | 'predictive'
 
+type StrafePattern =
+  | 'sustained'
+  | 'burst'
+  | 'oscillate'
+  | 'feint'
+  | 'freeze'
+
 export class StrafeController {
   private currentDir: ControlState | undefined = undefined
   private counter: number = 0
@@ -16,8 +23,21 @@ export class StrafeController {
   private circleNextSwitchAt: number
   private circleCurrentDir: 'left' | 'right' = 'left'
 
+  private pattern: StrafePattern = 'sustained'
+  private patternTicksLeft: number = 0
+  private oscillatePhaseTick: number = 0
+  private feintPhase: 'fake' | 'real' = 'fake'
+  private feintTicksLeft: number = 0
+  private burstTicksLeft: number = 0
+  private burstDir: ControlState = 'left'
+  private lastHitCount: number = 0
+  private consecutiveHits: number = 0
+  private noiseAccum: number = 0
+  private entropy: number = 0
+
   constructor(private readonly config: StrafeConfig) {
     this.circleNextSwitchAt = randomIntInRange(config.circleSwitchIntervalHits)
+    this.pickNewPattern()
   }
 
   update(
@@ -46,7 +66,11 @@ export class StrafeController {
       return
     }
 
-    const pauseProb = this.config.pauseProbability * (1 / Math.max(0.1, fatigueMultiplier))
+    const pauseProb =
+      this.config.pauseProbability *
+      (1 / Math.max(0.1, fatigueMultiplier)) *
+      (inRange ? 0.2 : 1.0)
+
     if (shouldTrigger(pauseProb)) {
       this.pauseTicksLeft = randomIntInRange(this.config.pauseDurationTicks)
       this.clearDir(bot)
@@ -57,6 +81,9 @@ export class StrafeController {
       this.applyDir(bot, forcedDir, inRange)
       return
     }
+
+    this.entropy += gaussianNoise(0.08)
+    this.entropy = Math.max(0, Math.min(1, this.entropy))
 
     switch (this.config.mode as StrafeMode) {
       case 'circle':
@@ -75,11 +102,16 @@ export class StrafeController {
   }
 
   recordHit(): void {
+    this.consecutiveHits++
     this.circleHitsSinceSwitch++
     if (this.config.circleSwitchEnabled && this.circleHitsSinceSwitch >= this.circleNextSwitchAt) {
       this.circleCurrentDir = this.circleCurrentDir === 'left' ? 'right' : 'left'
       this.circleHitsSinceSwitch = 0
       this.circleNextSwitchAt = randomIntInRange(this.config.circleSwitchIntervalHits)
+    }
+    if (this.consecutiveHits % 3 === 0) {
+      this.entropy += 0.25
+      this.pickNewPattern()
     }
   }
 
@@ -87,6 +119,33 @@ export class StrafeController {
     if (this.currentDir) {
       bot.setControlState(this.currentDir, false)
       this.currentDir = undefined
+    }
+  }
+
+  private pickNewPattern(): void {
+    const rand = Math.random()
+    const highEntropy = this.entropy > 0.6
+
+    if (rand < 0.28) {
+      this.pattern = 'sustained'
+      this.patternTicksLeft = randomIntInRange({ min: 8, max: 22 })
+    } else if (rand < 0.50) {
+      this.pattern = 'burst'
+      this.patternTicksLeft = randomIntInRange({ min: 3, max: 7 })
+      this.burstTicksLeft = this.patternTicksLeft
+      this.burstDir = Math.random() > 0.5 ? 'left' : 'right'
+    } else if (rand < 0.66) {
+      this.pattern = 'oscillate'
+      this.patternTicksLeft = randomIntInRange({ min: 10, max: 20 })
+      this.oscillatePhaseTick = 0
+    } else if (rand < (highEntropy ? 0.88 : 0.78)) {
+      this.pattern = 'feint'
+      this.feintPhase = 'fake'
+      this.feintTicksLeft = randomIntInRange({ min: 2, max: 5 })
+      this.patternTicksLeft = 12
+    } else {
+      this.pattern = 'freeze'
+      this.patternTicksLeft = randomIntInRange({ min: 1, max: 4 })
     }
   }
 
@@ -111,36 +170,16 @@ export class StrafeController {
     _hitsLanded: number,
     fatigueMultiplier: number,
   ): void {
-    const dir = this.circleCurrentDir
-    const jitterAmt = this.config.durationJitter
-    if (this.counter <= 0) {
-      const base = randomIntInRange(jitterAmt)
-      this.counter = Math.max(1, Math.round(base * fatigueMultiplier))
-    }
-    this.applyDir(bot, dir, inRange)
-    this.counter--
+    this.runPattern(bot, this.circleCurrentDir, inRange, fatigueMultiplier)
   }
 
   private updateRandom(bot: Bot, inRange: boolean, fatigueMultiplier: number): void {
-    if (this.counter <= 0) {
-      const jitter = this.config.durationJitter
-      const base = randomIntInRange({ min: jitter.min + 5, max: jitter.max + 15 })
-      this.counter = Math.max(1, Math.round(base * fatigueMultiplier))
-      const dir: ControlState = Math.random() < 0.5 ? 'left' : 'right'
-      this.applyDir(bot, dir, inRange)
-    }
-    this.counter--
+    this.runPattern(bot, this.circleCurrentDir, inRange, fatigueMultiplier)
   }
 
   private updateIntelligent(bot: Bot, inRange: boolean, fatigueMultiplier: number): void {
-    if (this.counter <= 0 || this.currentDir === undefined) {
-      const jitter = this.config.durationJitter
-      const base = randomIntInRange({ min: jitter.min + 2, max: jitter.max + 8 })
-      this.counter = Math.max(1, Math.round(base * fatigueMultiplier))
-      this.currentDir = Math.random() < 0.5 ? 'left' : 'right'
-    }
-    this.applyDir(bot, this.currentDir, inRange)
-    this.counter--
+    const dir = this.currentDir ?? (Math.random() > 0.5 ? 'left' : 'right')
+    this.runPattern(bot, dir as 'left' | 'right', inRange, fatigueMultiplier)
   }
 
   private updatePredictive(
@@ -149,28 +188,86 @@ export class StrafeController {
     inRange: boolean,
     fatigueMultiplier: number,
   ): void {
-    this.velocityHistory.push(target.velocity.clone())
-    if (this.velocityHistory.length > 8) this.velocityHistory.shift()
+    const vel = target.velocity
+    const cross =
+      vel.x * (bot.entity.position.z - target.position.z) -
+      vel.z * (bot.entity.position.x - target.position.x)
+    const baseDir: 'left' | 'right' = cross > 0 ? 'left' : 'right'
+    this.runPattern(bot, baseDir, inRange, fatigueMultiplier)
+  }
 
-    const noiseFactor = this.config.predictiveNoiseFactor
-    const sum = this.velocityHistory.reduce(
-      (a, v) => new Vec3(a.x + v.x, 0, a.z + v.z),
-      new Vec3(0, 0, 0),
-    )
-    const avg = sum.scaled(1 / this.velocityHistory.length)
-    const noisedX = avg.x + gaussianNoise(noiseFactor * Math.abs(avg.x) + 0.01)
-    const noisedZ = avg.z + gaussianNoise(noiseFactor * Math.abs(avg.z) + 0.01)
-    const mag = Math.sqrt(noisedX * noisedX + noisedZ * noisedZ)
-
-    if (mag < 0.025) {
-      this.updateRandom(bot, inRange, fatigueMultiplier)
-      return
+  private runPattern(
+    bot: Bot,
+    baseDir: 'left' | 'right',
+    inRange: boolean,
+    fatigueMultiplier: number,
+  ): void {
+    if (this.patternTicksLeft <= 0) {
+      this.pickNewPattern()
+      if (Math.random() < 0.3) {
+        this.circleCurrentDir = Math.random() > 0.5 ? 'left' : 'right'
+      }
     }
+    this.patternTicksLeft--
 
-    const heading = new Vec3(noisedX / mag, 0, noisedZ / mag)
-    const rightPerp = new Vec3(heading.z, 0, -heading.x)
-    const rel = bot.entity.position.minus(target.position)
-    const dot = rel.x * rightPerp.x + rel.z * rightPerp.z
-    this.applyDir(bot, dot >= 0 ? 'right' : 'left', inRange)
+    switch (this.pattern) {
+      case 'sustained': {
+        const jitterAmt = this.config.durationJitter
+        if (this.counter <= 0) {
+          const base = randomIntInRange(jitterAmt)
+          this.counter = Math.max(1, Math.round(base * fatigueMultiplier))
+          this.applyDir(bot, baseDir, inRange)
+        } else {
+          this.counter--
+        }
+        break
+      }
+
+      case 'burst': {
+        if (this.burstTicksLeft > 0) {
+          this.burstTicksLeft--
+          this.applyDir(bot, this.burstDir, inRange)
+        } else {
+          this.clearDir(bot)
+        }
+        break
+      }
+
+      case 'oscillate': {
+        this.oscillatePhaseTick++
+        const period = Math.floor(3 + this.entropy * 4)
+        const dir: ControlState =
+          Math.floor(this.oscillatePhaseTick / period) % 2 === 0 ? 'left' : 'right'
+        this.applyDir(bot, dir, inRange)
+        break
+      }
+
+      case 'feint': {
+        if (this.feintPhase === 'fake') {
+          if (this.feintTicksLeft > 0) {
+            this.feintTicksLeft--
+            const fakeDir: ControlState = baseDir === 'left' ? 'right' : 'left'
+            this.applyDir(bot, fakeDir, inRange)
+          } else {
+            this.feintPhase = 'real'
+            this.feintTicksLeft = randomIntInRange({ min: 4, max: 9 })
+          }
+        } else {
+          if (this.feintTicksLeft > 0) {
+            this.feintTicksLeft--
+            this.applyDir(bot, baseDir, inRange)
+          } else {
+            this.pattern = 'sustained'
+            this.patternTicksLeft = randomIntInRange({ min: 5, max: 12 })
+          }
+        }
+        break
+      }
+
+      case 'freeze': {
+        this.clearDir(bot)
+        break
+      }
+    }
   }
 }
