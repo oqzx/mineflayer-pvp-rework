@@ -1,7 +1,6 @@
 import type { Bot } from 'mineflayer'
 import type { Item } from 'prismarine-item'
 import type { GapConfig } from '../config/types.js'
-import type { CombatPhase } from '../core/combat-state.js'
 
 export class GapHandler {
   private eating: boolean = false
@@ -19,16 +18,11 @@ export class GapHandler {
     )
   }
 
-  shouldEat(bot: Bot, phase: CombatPhase, _incomingThreat: boolean): boolean {
+  shouldEat(bot: Bot, _phase: CombatPhase, _incomingThreat: boolean): boolean {
     if (!this.config.enabled || this.eating) return false
     if ((bot.health ?? 20) > this.config.healthThreshold) return false
     if (!this.findGoldenApple(bot)) return false
-
-    const safePhasesToEat: CombatPhase[] = ['backing-off', 'retreating', 'idle']
-    const canEatDuringCombat =
-      this.config.eatDuringCombat && phase !== 'bow-combat' && phase !== 'dodging'
-
-    return safePhasesToEat.includes(phase) || canEatDuringCombat
+    return true
   }
 
   async eat(bot: Bot): Promise<boolean> {

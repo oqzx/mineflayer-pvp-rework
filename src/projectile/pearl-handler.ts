@@ -138,6 +138,48 @@ export class PearlHandler {
     return estimateFallDamage(height) >= (bot.health ?? 20)
   }
 
+  shouldThrowEscape(bot: Bot, enemy: Entity | null): boolean {
+    if (!this.config.enabled || this.throwing) return false
+    if (!hasEnderPearl(bot)) return false
+    if (enemy === null) return false
+    const dist = bot.entity.position.distanceTo(enemy.position)
+    return dist < 8
+  }
+
+  async throwEscape(bot: Bot, enemy: Entity): Promise<boolean> {
+    const eyePos = getEyePos(bot)
+    const awayDir = bot.entity.position.minus(enemy.position).normalize()
+    const escapeTargets: Vec3[] = []
+    for (let dist = 8; dist <= 20; dist += 4) {
+      for (let yOff = 0; yOff <= 4; yOff++) {
+        const candidate = bot.entity.position.offset(
+          awayDir.x * dist + (Math.random() - 0.5) * 4,
+          yOff,
+          awayDir.z * dist + (Math.random() - 0.5) * 4,
+        )
+        const ground = bot.blockAt(candidate.offset(0, -1, 0))
+        const air1 = bot.blockAt(candidate)
+        const air2 = bot.blockAt(candidate.offset(0, 1, 0))
+        if (ground && ground.name !== 'air' && air1?.name === 'air' && air2?.name === 'air') {
+          escapeTargets.push(candidate)
+          break
+        }
+      }
+      if (escapeTargets.length > 0) break
+    }
+    const safePos = escapeTargets[0] ?? null
+    if (!safePos) {
+      const fallback = findSafeLanding(bot, this.config.safeLandingSearchRadius, [enemy.position])
+      if (!fallback) return false
+      const aim2 = aimToStaticPosition(eyePos, fallback.offset(0.5, 0.5, 0.5))
+      if (!aim2) return false
+      return this.executeThrow(bot, aim2.yaw, aim2.pitch)
+    }
+    const aim = aimToStaticPosition(eyePos, safePos.offset(0.5, 0.5, 0.5))
+    if (!aim) return false
+    return this.executeThrow(bot, aim.yaw, aim.pitch)
+  }
+
   async throwAggressive(bot: Bot, target: Entity): Promise<boolean> {
     const eyePos = getEyePos(bot)
     const targetVel = (target as Entity & { velocity?: Vec3 }).velocity ?? new Vec3(0, 0, 0)

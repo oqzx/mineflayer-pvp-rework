@@ -68,7 +68,15 @@ export function buildTransitions() {
     .build()
 
   const meleeToRetreat = getTransition('meleeToRetreat', [...MELEE], RetreatBehavior)
-    .setShouldTransition((s) => pvp(s).health.isCritical)
+    .setShouldTransition((s) => {
+      const d = pvp(s)
+      if (!d.health.isLow) return false
+      const hasPearl = s.bot.inventory.items().some((i: { name: string }) => i.name === 'ender_pearl')
+      if (hasPearl && d.config.pearl.enabled) return false
+      const hasGapple = d.gap.findGoldenApple(s.bot)
+      if (hasGapple) return false
+      return d.health.isCritical || d.health.current <= d.config.lowHealth.threshold
+    })
     .build()
 
   const retreatToEngaging = getTransition('retreatToEngaging', RetreatBehavior, EngagingBehavior)
@@ -101,9 +109,16 @@ export function buildTransitions() {
   const meleeToPearling = getTransition('meleeToPearling', [...MELEE], PearlingBehavior)
     .setShouldTransition((s) => {
       const d = pvp(s)
-      if (!d.config.pearl.enabled || !s.bot.ender.hasPearls()) return false
+      if (!d.config.pearl.enabled) return false
+      const hasPearl = s.bot.inventory.items().some((i: { name: string }) => i.name === 'ender_pearl')
+      if (!hasPearl) return false
       const snap = d.snapshot
       if (d.config.pearl.defensiveEnabled && snap.incomingProjectiles.length > 0) return true
+      if (d.health.isLow && d.health.current <= d.config.lowHealth.threshold) {
+        const hasGapple = d.gap.findGoldenApple(s.bot)
+        if (!hasGapple && d.entity) return true
+        if (d.health.isCritical) return true
+      }
       if (!snap.inRange && d.entity) {
         return d.entity.position.distanceTo(s.bot.entity.position) > d.config.pearl.aggressiveRange
       }

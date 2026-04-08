@@ -33,6 +33,8 @@ export class PearlingBehavior extends StateBehavior {
     if (d.pearl.shouldThrowDefensive(this.bot)) {
       const threats = d.targetSelector.getNearbyThreats(this.bot, d.config.generic.viewDistance)
       await d.pearl.throwDefensive(this.bot, threats)
+    } else if (d.health.isLow && d.entity && d.pearl.shouldThrowEscape(this.bot, d.entity)) {
+      await d.pearl.throwEscape(this.bot, d.entity)
     } else if (d.entity && d.pearl.shouldThrowAggressive(this.bot, d.entity)) {
       await d.pearl.throwAggressive(this.bot, d.entity)
     }
