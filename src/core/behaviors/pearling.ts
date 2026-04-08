@@ -91,6 +91,7 @@ export class PearlingBehavior extends StateBehavior {
     if (!this.bot.ender.hasPearls()) return
     const landBlock = this.bot.blockAt(target.position.offset(0, -1, 0))
     if (!landBlock || landBlock.name === 'air') return
+    console.log(landBlock)
     const shot = this.bot.ender.shotToBlock(landBlock)
     if (shot?.hit) await this.bot.ender.pearl(landBlock)
   }

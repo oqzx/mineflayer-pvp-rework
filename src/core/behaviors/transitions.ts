@@ -145,18 +145,18 @@ export function buildTransitions() {
   const meleeToDodge = getTransition('meleeToDodge', [...MELEE], DodgeBehavior)
     .setShouldTransition((s) => {
       const d = pvp(s)
-      if (d.incomingProjectiles.length === 0) return false
-      const proj = d.incomingProjectiles[0]
-      return proj !== undefined && proj.estimatedImpactTick - d.tick <= 4
+      if (d.aimingEntities.length === 0) return false
+      const threat = d.aimingEntities[0]
+      return threat !== undefined && threat.estimatedImpactTick - d.tick <= 4
     })
     .build()
 
   const dodgeToEngaging = getTransition('dodgeToEngaging', DodgeBehavior, EngagingBehavior)
-    .setShouldTransition((s) => pvp(s).incomingProjectiles.length === 0 && !!pvp(s).entity)
+    .setShouldTransition((s) => pvp(s).aimingEntities.length === 0 && !!pvp(s).entity)
     .build()
 
   const dodgeToIdle = getTransition('dodgeToIdle', DodgeBehavior, IdleBehavior)
-    .setShouldTransition((s) => pvp(s).incomingProjectiles.length === 0 && !pvp(s).entity)
+    .setShouldTransition((s) => pvp(s).aimingEntities.length === 0 && !pvp(s).entity)
     .build()
 
   return [

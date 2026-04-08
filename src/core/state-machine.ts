@@ -25,6 +25,7 @@ import '@nxg-org/mineflayer-auto-buff'
 import type { StateBehaviorBuilder } from '@nxg-org/mineflayer-static-statemachine/lib/util.js'
 
 const DRAIN_LIMIT = 16
+type TrackedThreatInfo = ReturnType<Bot['projectiles']['getIncomingProjectiles']>[number]
 
 const PHASE_NAME_MAP: Record<string, CombatPhase> = {
   Idle: 'idle',
@@ -173,18 +174,12 @@ export class StateMachine extends EventEmitter {
   private scanProjectiles(): void {
     this.data.incomingProjectiles = this.bot.projectiles
       .getIncomingProjectiles()
-      .map(({ entity, shotInfo }) => {
-      
-        const impactPosition =
-          shotInfo.intersectPos?.clone() ?? shotInfo.closestPoint?.clone() ?? entity.position.clone()
+      .map((info) => this.mapTrackedThreat(info))
+      .sort((a, b) => a.estimatedImpactTick - b.estimatedImpactTick)
 
-        return {
-          entity,
-          type: classifyProjectile(entity) ?? 'other',
-          estimatedImpactTick: this.tick + Math.max(0, Math.ceil(shotInfo.totalTicks)),
-          impactPosition,
-        }
-      })
+    this.data.aimingEntities = this.bot.projectiles
+      .getAimingEntities()
+      .map((info) => this.mapTrackedThreat(info))
       .sort((a, b) => a.estimatedImpactTick - b.estimatedImpactTick)
   }
 
@@ -197,10 +192,23 @@ export class StateMachine extends EventEmitter {
       target: this.data.entity,
       targets: this.targetSelector.getNearbyThreats(this.bot, this.config.generic.viewDistance),
       incomingProjectiles: this.data.incomingProjectiles,
+      aimingEntities: this.data.aimingEntities,
       tick: this.tick,
       botHealth: this.bot.health ?? 20,
     }
     this.snapshot = this.data.snapshot
+  }
+
+  private mapTrackedThreat({ entity, shotInfo }: TrackedThreatInfo) {
+    const impactPosition =
+      shotInfo.intersectPos?.clone() ?? shotInfo.closestPoint?.clone() ?? entity.position.clone()
+
+    return {
+      entity,
+      type: classifyProjectile(entity) ?? 'other',
+      estimatedImpactTick: this.tick + Math.max(0, Math.ceil(shotInfo.totalTicks)),
+      impactPosition,
+    }
   }
 
   private onLowHealth(): void {

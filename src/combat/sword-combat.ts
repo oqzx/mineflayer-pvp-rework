@@ -45,7 +45,12 @@ const PI_HALF = Math.PI / 2
 const DEBUG_ATTACK_SKIPS = false
 
 type BotWithPathfinder = Bot & {
-  pathfinder: { setGoal(g: goals.Goal, dynamic: boolean): void; stop(): void }
+  pathfinder: {
+    goal: goals.Goal | null
+    setGoal(goal: goals.Goal | null, dynamic?: boolean): void
+    stop(): void
+    isMoving(): boolean
+  }
 }
 
 class FollowGoal extends goals.Goal {
@@ -131,6 +136,8 @@ export class SwordCombat extends EventEmitter {
   private lookAwayTicksLeft = 0
   private overshootRecovering = false
   private kbCounterTicksLeft = 0
+  private shieldReequipArmed = false
+  private shieldReactivateAtTick: number | null = null
 
   constructor(
     public readonly bot: Bot,
@@ -187,6 +194,8 @@ export class SwordCombat extends EventEmitter {
     this.lastTarget = this.target
     this.target = undefined
     this.kbCounterTicksLeft = 0
+    this.shieldReequipArmed = false
+    this.shieldReactivateAtTick = null
     this.fittsTracker.reset()
     this.combo.reset()
     this.strafe.clearDir(this.bot)
@@ -250,6 +259,7 @@ export class SwordCombat extends EventEmitter {
     this.ticksSinceLastTargetHurt++
 
     this.combo.update(this.ticksSinceLastHurt, this.ticksSinceLastTargetHit)
+    this.processShieldReactivate()
 
     const profile = this.memory.getOrCreate(this.target.id)
     const strategy = this.adapter.deriveStrategy(profile)
@@ -361,6 +371,7 @@ export class SwordCombat extends EventEmitter {
       targets: [],
       threatLevel: 'low',
       incomingProjectiles: [],
+      aimingEntities: [],
       tick: this.currentTick,
       botHealth: this.bot.health ?? 20,
       targetHealth: undefined,
@@ -403,15 +414,16 @@ export class SwordCombat extends EventEmitter {
     if (this.shield.isEquipped(this.bot) && this.config.shield.mode === 'legit') {
       this.bot.deactivateItem()
     }
-    const onAttacked = (): void => {
-      this.removeListener('attackedTarget', onAttacked)
-      void (async () => {
-        await bot.waitForTicks(3)
-        if (this.shield.isEquipped(this.bot)) this.bot.activateItem(true)
-      })()
+    this.shieldReequipArmed = true
+  }
+
+  private processShieldReactivate(): void {
+    if (this.shieldReactivateAtTick === null || this.currentTick < this.shieldReactivateAtTick) return
+
+    this.shieldReactivateAtTick = null
+    if (this.shield.isEquipped(this.bot)) {
+      this.bot.activateItem(true)
     }
-    const bot = this.bot
-    this.once('attackedTarget', onAttacked)
   }
 
   private doMove(strategy: CombatStrategy, blend: BlendWeights): void {
@@ -780,6 +792,11 @@ export class SwordCombat extends EventEmitter {
     )
     const effectiveCps = Math.min(this.config.cps.max, humanCps)
 
+    if (this.shieldReequipArmed) {
+      this.shieldReequipArmed = false
+      this.shieldReactivateAtTick = this.currentTick + 3
+    }
+
     this.emit('attackedTarget', target)
     const held = this.bot.heldItem
     if (held) {
@@ -833,20 +850,30 @@ export class SwordCombat extends EventEmitter {
 
   private startFollow(): void {
     if (!this.target) return
-    if (this.followGoal && this.followGoalTargetId === this.target.id) return
     const pf = (this.bot as BotWithPathfinder).pathfinder
     if (!pf) return
-    this.stopFollow()
-    const predictTicks = this.config.follow.predictive ? this.config.follow.predictTicks : 0
-    this.followGoal = new FollowGoal(this.bot, this.target, this.config.follow.distance, predictTicks)
-    this.followGoalTargetId = this.target.id
-    pf.setGoal(this.followGoal, true)
+
+    const isSameTargetGoal = this.followGoalTargetId === this.target.id
+    if (!this.followGoal || !isSameTargetGoal) {
+      this.stopFollow()
+      const predictTicks = this.config.follow.predictive ? this.config.follow.predictTicks : 0
+      this.followGoal = new FollowGoal(this.bot, this.target, this.config.follow.distance, predictTicks)
+      this.followGoalTargetId = this.target.id
+    }
+
+    // Re-issue the goal if pathfinder was stopped or replaced while our cached goal still exists.
+    if (pf.goal !== this.followGoal) {
+      pf.setGoal(this.followGoal, true)
+    }
   }
 
   private stopFollow(): void {
-    if (!this.followGoal) return
     const pf = (this.bot as BotWithPathfinder).pathfinder
-    if (pf) pf.stop()
+    if (pf?.goal && this.followGoal && pf.goal === this.followGoal) {
+      pf.setGoal(null)
+    } else if (pf && this.followGoal && pf.isMoving()) {
+      pf.stop()
+    }
     this.followGoal = undefined
     this.followGoalTargetId = undefined
   }

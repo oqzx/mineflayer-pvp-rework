@@ -25,12 +25,20 @@ export type IncomingProjectile = {
   impactPosition: Vec3
 }
 
+export type AimingEntity = {
+  entity: Entity
+  type: 'arrow' | 'fireball' | 'pearl' | 'other'
+  estimatedImpactTick: number
+  impactPosition: Vec3
+}
+
 export type CombatSnapshot = {
   phase: CombatPhase
   target: Entity | undefined
   targets: Entity[]
   threatLevel: ThreatLevel
   incomingProjectiles: IncomingProjectile[]
+  aimingEntities: AimingEntity[]
   tick: number
   botHealth: number
   targetHealth: number | undefined
@@ -53,6 +61,7 @@ export function createSnapshot(): CombatSnapshot {
     targets: [],
     threatLevel: 'none',
     incomingProjectiles: [],
+    aimingEntities: [],
     tick: 0,
     botHealth: 20,
     targetHealth: undefined,

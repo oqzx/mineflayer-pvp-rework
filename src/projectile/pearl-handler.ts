@@ -144,6 +144,7 @@ export class PearlHandler {
       target.position.offset(0, target.height * 0.5, 0),
     )
     if (!aim) return false
+    
     return this.throw(bot, aim.yaw, aim.pitch)
   }
 
@@ -165,6 +166,7 @@ export class PearlHandler {
     try {
       await bot.util.inv.customEquip(pearl, 'hand')
       await bot.look(yaw, pitch, true)
+      await bot.waitForTicks(1)
       bot.activateItem(false)
       await bot.waitForTicks(2)
       return true

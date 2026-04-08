@@ -2,12 +2,13 @@ import type { Bot, ControlState } from 'mineflayer'
 import type { Entity } from 'prismarine-entity'
 import { Vec3 } from 'vec3'
 import type { DodgeConfig } from '../config/types.js'
-import type { IncomingProjectile } from '../core/combat-state.js'
+import type { AimingEntity, IncomingProjectile } from '../core/combat-state.js'
 import { vectorMagnitude } from '../calc/math.js'
 import { randomIntInRange, delay } from '../util/humanizer.js'
 
 const FIREBALL_ENTITY_NAMES = ['fireball', 'small_fireball', 'wither_skull']
 const ARROW_ENTITY_NAMES = ['arrow', 'spectral_arrow', 'trident']
+const PHYSICS_TICK_MS = 50
 
 export function classifyProjectile(entity: Entity): IncomingProjectile['type'] | null {
   const name = entity.name?.toLowerCase() ?? ''
@@ -36,37 +37,42 @@ export function chooseDodgeDir(projectile: Entity, bot: Entity): ControlState {
   return dot >= 0 ? 'right' : 'left'
 }
 
+function delayTicks(ticks: number): Promise<void> {
+  if (ticks <= 0) return Promise.resolve()
+  return delay(ticks * PHYSICS_TICK_MS)
+}
+
 export class DodgeController {
   private dodging: boolean = false
   private deflecting: boolean = false
 
   constructor(private readonly config: DodgeConfig) {}
 
-  async handleIncoming(bot: Bot, projectile: IncomingProjectile): Promise<void> {
+  async handleIncoming(bot: Bot, threat: IncomingProjectile | AimingEntity): Promise<void> {
     if (!this.config.enabled || this.dodging) return
 
-    if (projectile.type === 'fireball') {
-      const dist = bot.entity.position.distanceTo(projectile.entity.position)
+    if (threat.type === 'fireball') {
+      const dist = bot.entity.position.distanceTo(threat.entity.position)
       if (dist <= 4.5) {
-        await this.deflectFireball(bot, projectile.entity)
+        await this.deflectFireball(bot, threat.entity)
         return
       }
     }
 
-    await this.dodgeProjectile(bot, projectile.entity)
+    await this.dodgeProjectile(bot, threat.entity)
   }
 
   private async dodgeProjectile(bot: Bot, projectile: Entity): Promise<void> {
     this.dodging = true
-    const delayTicks = randomIntInRange(this.config.reactionDelay)
-    if (delayTicks > 0) await bot.waitForTicks(delayTicks)
+    const reactionDelayTicks = randomIntInRange(this.config.reactionDelay)
+    if (reactionDelayTicks > 0) await delayTicks(reactionDelayTicks)
 
     const dodgeDir = chooseDodgeDir(projectile, bot.entity)
     const opposite: ControlState = dodgeDir === 'left' ? 'right' : 'left'
 
     bot.setControlState(dodgeDir, true)
     bot.setControlState(opposite, false)
-    await bot.waitForTicks(4)
+    await delayTicks(6)
     bot.setControlState(dodgeDir, false)
     this.dodging = false
   }
