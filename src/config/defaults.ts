@@ -17,11 +17,11 @@ export const defaultConfig: FullConfig = {
   },
   wTap: {
     enabled: true,
-    everyHits: { min: 1, max: 3 },
+    everyHits: { min: 1, max: 1 },
   },
   blockHit: {
     enabled: true,
-    everyHits: { min: 2, max: 5 },
+    everyHits: { min: 1, max: 2 },
     holdDuration: { min: 80, max: 160 },
     postDuration: { min: 40, max: 100 },
   },
@@ -51,7 +51,7 @@ export const defaultConfig: FullConfig = {
     fittsBias: 0.5,
   },
   critical: {
-    enabled: true,
+    enabled: false,
     mode: 'hop',
     attemptRange: 2.5,
     reactionEnabled: true,
@@ -117,7 +117,7 @@ export const defaultConfig: FullConfig = {
     useForTowering: false,
   },
   humanization: {
-    reactionDelay: { min: 50, max: 150 },
+    reactionDelay: { min: 40, max: 90 },
     rotateSmoothFactor: 0.35,
     movementNoise: 0.03,
     attackJitterMs: { min: 0, max: 25 },
