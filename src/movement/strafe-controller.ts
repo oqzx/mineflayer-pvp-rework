@@ -128,7 +128,7 @@ export class StrafeController {
 
   private updateRandom(bot: Bot, inRange: boolean, fatigueMultiplier: number): void {
     const dirs: ControlState[] = ['left', 'right']
-    const dir = dirs[Math.floor(Math.random() * dirs.length)]
+    const dir = dirs[Math.floor(Math.random() * dirs.length)]!
     const jitterAmt = this.config.durationJitter
     if (this.counter <= 0) {
       const base = randomIntInRange(jitterAmt)

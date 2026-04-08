@@ -30,7 +30,7 @@
   },
   "dependencies": {
     "@nxg-org/mineflayer-auto-buff": "^1.4.3",
-    "@nxg-org/mineflayer-ender": "^1.1.5",
+    "@nxg-org/mineflayer-ender": "^1.1.6",
     "@nxg-org/mineflayer-smooth-look": "^1.0.3",
     "@nxg-org/mineflayer-static-statemachine": "^0.3.6",
     "@nxg-org/mineflayer-tracker": "^1.3.2",
