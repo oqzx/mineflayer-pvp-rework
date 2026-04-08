@@ -2,7 +2,7 @@ import type { Bot } from 'mineflayer'
 import type { Entity } from 'prismarine-entity'
 import type { Vec3 } from 'vec3'
 
-type PearlTrackPhase = 'idle' | 'awaiting-spawn' | 'in-flight' | 'awaiting-teleport'
+type PearlTrackPhase = 'idle' | 'preparing-throw' | 'awaiting-spawn' | 'in-flight' | 'awaiting-teleport'
 
 type PearlTrackState = {
   phase: PearlTrackPhase
@@ -12,8 +12,9 @@ type PearlTrackState = {
   teleportOrigin: Vec3 | null
 }
 
-const SPAWN_RADIUS = 3
+const SPAWN_RADIUS = 5
 const SPAWN_TIMEOUT_MS = 500
+const PREPARE_TIMEOUT_MS = 2500
 const TELEPORT_TIMEOUT_MS = 1500
 const TELEPORT_MIN_DISTANCE = 1.5
 
@@ -57,7 +58,8 @@ export class ThrownPearlTracker {
   private reset(bot: Bot): void {
     const state = this.states.get(bot)
     if (state && state.phase !== 'idle') {
-      logTracker(bot, `reset from=${state.phase}`)
+      const elapsed = state.startedAt > 0 ? now() - state.startedAt : 0
+      logTracker(bot, `reset from=${state.phase} elapsed=${elapsed}ms`)
     }
     this.states.set(bot, createIdleState())
   }
@@ -66,12 +68,20 @@ export class ThrownPearlTracker {
     const state = this.getState(bot)
     const elapsed = now() - state.startedAt
 
+    if (state.phase === 'preparing-throw' && elapsed > PREPARE_TIMEOUT_MS) {
+      logTracker(bot, `expire preparing-throw elapsed=${elapsed}ms timeout=${PREPARE_TIMEOUT_MS}ms`)
+      this.reset(bot)
+      return
+    }
+
     if (state.phase === 'awaiting-spawn' && elapsed > SPAWN_TIMEOUT_MS) {
+      logTracker(bot, `expire awaiting-spawn elapsed=${elapsed}ms timeout=${SPAWN_TIMEOUT_MS}ms`)
       this.reset(bot)
       return
     }
 
     if (state.phase === 'awaiting-teleport' && elapsed > TELEPORT_TIMEOUT_MS) {
+      logTracker(bot, `expire awaiting-teleport elapsed=${elapsed}ms timeout=${TELEPORT_TIMEOUT_MS}ms`)
       this.reset(bot)
     }
   }
@@ -90,26 +100,43 @@ export class ThrownPearlTracker {
     return !this.isActive(bot)
   }
 
-  beginThrow(bot: Bot, origin: Vec3): boolean {
+  beginPrepareThrow(bot: Bot, origin: Vec3): boolean {
     this.expire(bot)
     const state = this.getState(bot)
     if (state.phase !== 'idle') return false
 
     this.states.set(bot, {
-      phase: 'awaiting-spawn',
+      phase: 'preparing-throw',
       startedAt: now(),
       throwOrigin: origin.clone(),
       pearlEntityId: null,
       teleportOrigin: null,
     })
-    logTracker(bot, `beginThrow origin=${origin}`)
+    logTracker(bot, `beginPrepareThrow origin=${origin} timeout=${PREPARE_TIMEOUT_MS}ms`)
+    return true
+  }
+
+  markThrowSent(bot: Bot, origin?: Vec3): boolean {
+    this.expire(bot)
+    const state = this.getState(bot)
+    if (state.phase !== 'preparing-throw') return false
+
+    const throwOrigin = origin?.clone() ?? state.throwOrigin?.clone() ?? bot.entity.position.clone()
+    this.states.set(bot, {
+      phase: 'awaiting-spawn',
+      startedAt: now(),
+      throwOrigin,
+      pearlEntityId: null,
+      teleportOrigin: null,
+    })
+    logTracker(bot, `markThrowSent origin=${throwOrigin} timeout=${SPAWN_TIMEOUT_MS}ms`)
     return true
   }
 
   cancelThrow(bot: Bot): void {
     const state = this.getState(bot)
-    if (state.phase === 'awaiting-spawn') {
-      logTracker(bot, 'cancelThrow while awaiting-spawn')
+    if (state.phase === 'preparing-throw' || state.phase === 'awaiting-spawn') {
+      logTracker(bot, `cancelThrow while ${state.phase}`)
       this.reset(bot)
     }
   }
@@ -146,6 +173,7 @@ export class ThrownPearlTracker {
       pearlEntityId: null,
       teleportOrigin: bot.entity.position.clone(),
     })
+    logTracker(bot, `awaiting-teleport timeout=${TELEPORT_TIMEOUT_MS}ms`)
   }
 
   onBotMove(bot: Bot, previousPosition?: Vec3): void {

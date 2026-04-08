@@ -96,6 +96,7 @@ export type FireballConfig = {
 export type PearlConfig = {
   enabled: boolean
   aggressiveRange: number
+  throwHuntdown: boolean
   defensiveEnabled: boolean
   voidFallThreshold: number
   safeLandingSearchRadius: number

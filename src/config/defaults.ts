@@ -86,6 +86,7 @@ export const defaultConfig: FullConfig = {
   pearl: {
     enabled: true,
     aggressiveRange: 16,
+    throwHuntdown: true,
     defensiveEnabled: true,
     voidFallThreshold: 3,
     safeLandingSearchRadius: 12,

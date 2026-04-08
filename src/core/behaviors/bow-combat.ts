@@ -44,6 +44,6 @@ export class BowCombatBehavior extends StateBehavior {
 
   onStateExited(): void {
     const d = this.data as PvpData
-    d.projectile.stop()
+    void d.projectile.stop()
   }
 }

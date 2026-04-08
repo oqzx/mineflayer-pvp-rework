@@ -1,17 +1,19 @@
 import { Vec3 } from 'vec3'
-import { AABBUtils } from '@nxg-org/mineflayer-util-plugin'
+import { AABB, AABBUtils, InterceptFunctions } from '@nxg-org/mineflayer-util-plugin'
+import { EnderShotFactory } from '@nxg-org/mineflayer-ender'
+
 import type { Bot } from 'mineflayer'
 import type { Block } from 'prismarine-block'
 import type { Entity } from 'prismarine-entity'
 import type { PearlConfig } from '../config/types.js'
-import { simulateProjectile } from './trajectory.js'
-import { VOID_DEPTH, MAX_PEARL_TICKS } from '../calc/constants.js'
+import { VOID_DEPTH } from '../calc/constants.js'
 import { ThrownPearlTracker } from './thrown-pearl-tracker.js'
 
 export type PearlUsageReason = 'aggressive' | 'escape-void' | 'escape-fall' | 'repositioning'
 
 export type EnemyPearlPrediction = {
-  entity: Entity
+  pearlEntity: Entity
+  throwerId: number | null
   estimatedLandTick: number
   estimatedLandPos: Vec3
 }
@@ -58,6 +60,10 @@ type AggressivePearlPlan = {
   pitch: number
 }
 
+type HuntdownPearlPlan = AggressivePearlPlan & {
+  targetPos: Vec3
+}
+
 type EscapePearlPlan = {
   block: Block
 }
@@ -67,7 +73,7 @@ export class PearlHandler {
   private readonly tracker = ThrownPearlTracker.instance
   private readonly enemyPearlPredictions = new Map<number, EnemyPearlPrediction>()
 
-  constructor(private readonly config: PearlConfig) {}
+  constructor(private readonly config: PearlConfig) { }
 
   get isThrowing(): boolean {
     return this.throwing
@@ -108,6 +114,11 @@ export class PearlHandler {
       return `escape:distance=${distance.toFixed(2)} block=${escapePlan.block.position}`
     }
 
+    const huntdownShot = this.getThrowHuntdownShot(bot, target)
+    if (huntdownShot) {
+      return `throwHuntdown:land=${huntdownShot.targetPos}`
+    }
+
     const aggressiveShot = this.getAggressiveShot(bot, target)
     if (aggressiveShot) {
       const distance = bot.entity.position.distanceTo(target.position)
@@ -120,7 +131,7 @@ export class PearlHandler {
   }
 
   shouldThrowAggressive(bot: Bot, target: Entity): boolean {
-    return this.getAggressiveShot(bot, target) !== null
+    return this.getThrowHuntdownShot(bot, target) !== null || this.getAggressiveShot(bot, target) !== null
   }
 
   shouldThrowDefensive(bot: Bot): boolean {
@@ -133,6 +144,24 @@ export class PearlHandler {
   }
 
   async throwAggressive(bot: Bot, target: Entity): Promise<boolean> {
+    const huntdownShot = this.getThrowHuntdownShot(bot, target)
+    if (huntdownShot) {
+      const targetAABB = AABBUtils.getEntityAABBRaw({
+        position: huntdownShot.targetPos,
+        height: target.height,
+        width: target.width ?? 0.6,
+      })
+
+      console.log(
+        `[pearl-handler] throwHuntdown start target=${target.id} yaw=${huntdownShot.yaw.toFixed(3)} pitch=${huntdownShot.pitch.toFixed(3)} land=${huntdownShot.targetPos}`,
+      )
+      return await this.executeThrow(bot, async () => {
+        const result = await bot.ender.pearlAABB(targetAABB, huntdownShot.targetPos)
+        console.log(`[pearl-handler] throwHuntdown end target=${target.id} result=${result}`)
+        return result
+      })
+    }
+
     const shot = this.getAggressiveShot(bot, target)
     if (!shot) {
       console.log(
@@ -184,12 +213,14 @@ export class PearlHandler {
     })
   }
 
-  onEntitySpawn(bot: Bot, entity: Entity): void {
+  onEntitySpawn(bot: Bot, entity: Entity, tick?: number, target?: Entity): void {
     this.tracker.onEntitySpawn(bot, entity)
+    if (tick !== undefined) this.trackEnemyPearl(bot, entity, tick, target)
   }
 
   onEntityGone(bot: Bot, entity: Entity): void {
     this.tracker.onEntityGone(bot, entity)
+    this.removeEnemyPearl(entity.id)
   }
 
   onBotMove(bot: Bot, previousPosition?: Vec3): void {
@@ -200,19 +231,49 @@ export class PearlHandler {
     this.tracker.onForcedMove(bot)
   }
 
-  trackEnemyPearl(entity: Entity, tick: number): void {
-    const sim = simulateProjectile(
-      entity.position.offset(0, entity.height * 0.9, 0),
-      entity.yaw,
-      entity.pitch,
-      'ender_pearl',
-      MAX_PEARL_TICKS,
-    )
+  trackEnemyPearl(bot: Bot, entity: Entity, tick: number, target?: Entity): void {
+    if (!this.config.throwHuntdown) return
+    if (!entity.name?.includes('pearl')) return
+
+    const closestPlayer = Object.values(bot.entities)
+      .filter((candidate): candidate is Entity => {
+        return candidate.type === 'player' && candidate.id !== bot.entity.id
+      })
+      .sort((a, b) => entity.position.xzDistanceTo(a.position) - entity.position.xzDistanceTo(b.position))[0]
+
+    const throwerId = closestPlayer?.id ?? null
+
+    if (throwerId === null) return
+
+    if (throwerId !== target?.id) {
+      console.log(`Thrower didn't match. ${throwerId} vs ${target?.id}`)
+    }
+
+    const mag = Math.sqrt(Math.pow(entity.velocity.x, 2) + Math.pow(entity.velocity.y, 2) + Math.pow(entity.velocity.z, 2))
+    console.log(`Tracking pearl ${entity.id} from thrower ${throwerId} with velocity ${entity.velocity} (mag=${mag.toFixed(2)})`)
+
+    const calcs = new InterceptFunctions(bot);
+    const shot = EnderShotFactory.fromEntity(entity, bot, calcs);
+
+    const fakePos = new Vec3(0, 0, 0)
+    const sim = shot.calcToAABB(AABB.fromBlock(fakePos), fakePos, true);
+
+    // console.log(sim, shot.points, shot.pointVelocities)
+    console.log(shot.points.map((p) => p.toString()).join(' -> '), `simulated land=${sim.block?.position.offset(0,1,0) ?? 'unknown'} in ${sim.totalTicks} ticks`)
+    // map all velocity magntidues.
+    const mags = shot.pointVelocities.map((v) => Math.sqrt(Math.pow(v.x, 2) + Math.pow(v.y, 2) + Math.pow(v.z, 2)))
+    console.log('velocity mags', mags.map((m) => m.toFixed(2)).join(', '))
+
+    const landing = sim.block?.position.offset(0,1,0) ?? fakePos
     this.enemyPearlPredictions.set(entity.id, {
-      entity,
+      pearlEntity: entity,
+      throwerId,
       estimatedLandTick: tick + sim.totalTicks,
-      estimatedLandPos: sim.finalPosition,
+      estimatedLandPos: landing
     })
+    console.log(
+      `[pearl-handler] tracked enemy pearl pearl=${entity.id} thrower=${throwerId} target=${target?.id} land=${landing} landTick=${sim.totalTicks}`,
+    )
   }
 
   getEnemyPearlPredictions(): EnemyPearlPrediction[] {
@@ -226,9 +287,36 @@ export class PearlHandler {
   private getPearlingPlanType(bot: Bot, target?: Entity, lowHealth = false): 'defensive' | 'escape' | 'aggressive' | null {
     if (this.getDefensiveLandingBlock(bot)) return 'defensive'
     if (lowHealth && target && this.getEscapePlan(bot, target)) return 'escape'
+    if (target && this.getThrowHuntdownShot(bot, target)) return 'aggressive'
     if (target && this.getAggressiveShot(bot, target)) return 'aggressive'
     return null
   }
+
+  private getThrowHuntdownShot(bot: Bot, target: Entity): HuntdownPearlPlan | null {
+    if (!this.config.throwHuntdown || !this.config.enabled || !this.canThrowPearl(bot)) return null
+
+    const prediction = Array.from(this.enemyPearlPredictions.values())
+      .find((entry) => entry.throwerId === target.id)
+    if (!prediction) return null
+
+    const orgBlockPos = prediction.estimatedLandPos.offset(0.5, 0, 0.5)
+    const orgBlockBB = AABBUtils.getEntityAABBRaw({
+      position: orgBlockPos,
+      height: 1,
+      width: 1,
+    })
+    const predShot = bot.ender.shotToAABB(orgBlockBB, orgBlockPos)
+
+    if (!predShot?.hit) return null
+
+    return {
+      yaw: predShot.yaw,
+      pitch: predShot.pitch,
+      targetPos: orgBlockPos,
+    }
+  }
+
+ 
 
   private getAggressiveShot(bot: Bot, target: Entity): AggressivePearlPlan | null {
     if (!this.config.enabled || !this.canThrowPearl(bot)) return null
@@ -310,7 +398,7 @@ export class PearlHandler {
   }
 
   private async executeThrow(bot: Bot, action: () => Promise<boolean | void>): Promise<boolean> {
-    if (!this.tracker.beginThrow(bot, bot.entity.position)) {
+    if (!this.tracker.beginPrepareThrow(bot, bot.entity.position)) {
       console.log(`[pearl-handler] executeThrow blocked phase=${this.getTrackerPhase(bot)}`)
       return false
     }
@@ -323,6 +411,7 @@ export class PearlHandler {
         console.log('[pearl-handler] executeThrow action returned false')
         return false
       }
+      this.tracker.markThrowSent(bot, bot.entity.position)
       console.log('[pearl-handler] executeThrow action completed')
       return true
     } catch (error) {
