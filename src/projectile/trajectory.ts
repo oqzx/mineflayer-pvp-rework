@@ -28,27 +28,26 @@ export function simulateProjectile(
   weaponName: string,
   maxTicks = 120,
 ): TrajectoryResult {
-  const info = trajectoryInfo[weaponName] ??
-    trajectoryInfo['bow'] ?? { v0: 3.0, g: 0.05, drag: 0.99 }
+  const info = trajectoryInfo[weaponName] ?? trajectoryInfo['bow'] ?? { v0: 3.0, g: 0.05, drag: 0.99 }
   const vel = yawPitchToDir(yaw, pitch, info.v0)
   const pos = origin.clone()
   const points: TrajectoryPoint[] = []
 
   for (let t = 0; t < maxTicks; t++) {
-    vel.y -= info.g
-    vel.x *= info.drag
-    vel.y *= info.drag
-    vel.z *= info.drag
     pos.x += vel.x
     pos.y += vel.y
     pos.z += vel.z
 
-    const snap: TrajectoryPoint = {
+    vel.x *= info.drag
+    vel.y *= info.drag
+    vel.z *= info.drag
+    vel.y -= info.g
+
+    points.push({
       position: pos.clone(),
       velocity: vel.clone(),
       tick: t + 1,
-    }
-    points.push(snap)
+    })
 
     if (pos.y < -64) break
   }
@@ -96,15 +95,12 @@ function verticalAtHDist(
   return null
 }
 
-function solvePitch(
+export function solvePitch(
   hDist: number,
   vDist: number,
   weaponName: string,
 ): number | null {
   if (hDist < 0.001) return -Math.PI / 2
-
-  const maxCheck = verticalAtHDist(0, hDist, weaponName)
-  if (!maxCheck) return null
 
   let lo = -Math.PI * 0.44
   let hi = Math.PI * 0.44
@@ -112,7 +108,10 @@ function solvePitch(
   const hiCheck = verticalAtHDist(hi, hDist, weaponName)
   if (hiCheck && hiCheck.v < vDist) return null
 
-  for (let iter = 0; iter < 30; iter++) {
+  const loCheck = verticalAtHDist(lo, hDist, weaponName)
+  if (loCheck && loCheck.v > vDist) return null
+
+  for (let iter = 0; iter < 32; iter++) {
     const mid = (lo + hi) * 0.5
     const midCheck = verticalAtHDist(mid, hDist, weaponName)
 
@@ -121,7 +120,7 @@ function solvePitch(
       continue
     }
 
-    if (Math.abs(midCheck.v - vDist) < 0.05) {
+    if (Math.abs(midCheck.v - vDist) < 0.02) {
       return mid
     }
 
