@@ -89,9 +89,9 @@ export class StateMachine extends EventEmitter {
     this.bot.projectiles.detectIncomingProjectiles = true
     this.bot.projectiles.detectAimingEntities = true
 
-    this.bot.ender.maxTicks = 100;
-    this.bot.ender.dvStep = 360;
-    this.bot.ender.epsilon = 1e-2;
+    this.bot.ender.maxTicks = 100
+    this.bot.ender.dvStep = 360
+    this.bot.ender.epsilon = 1e-2
 
     sword.on('attackedTarget', (t: Entity) => {
       console.log(`[event] tick=${this.tick} attackedTarget -> ${t.username ?? t.name ?? t.id}`)
@@ -261,25 +261,23 @@ export class StateMachine extends EventEmitter {
 
     await new Promise<void>((res) => {
       const listener = async (e: Entity) => {
-      
-          if (e.id !== entity.id) return;
-          if (e.type === "player") return;
-      
-          this.data.pearl.onEntitySpawn(this.bot, entity, this.tick, this.data.entity)
-          this.bot.off("entityMoved", listener)
-          this.bot.off("entityVelocity", listener);
-          res()
-        }
-    
-        this.bot.on("entityMoved", listener);
-        this.bot.on("entityVelocity", listener);
+        if (e.id !== entity.id) return
+        if (e.type === 'player') return
 
-      
-        setTimeout(() => {
-      this.bot.off("entityMoved", listener)
-        this.bot.off("entityVelocity", listener)
-        res();
-        }, 500);
+        this.data.pearl.onEntitySpawn(this.bot, entity, this.tick, this.data.entity)
+        this.bot.off('entityMoved', listener)
+        this.bot.off('entityVelocity', listener)
+        res()
+      }
+
+      this.bot.on('entityMoved', listener)
+      this.bot.on('entityVelocity', listener)
+
+      setTimeout(() => {
+        this.bot.off('entityMoved', listener)
+        this.bot.off('entityVelocity', listener)
+        res()
+      }, 500)
     })
   }
 

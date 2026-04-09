@@ -41,7 +41,9 @@ export class EatingBehavior extends StateBehavior {
 
     const result = await this.tryInstantHealth(d, runId)
     if (!this.isActiveRun(runId)) return
-    console.log(`Tried to apply instant health buff, result: ${result}, ${d.autoBuff.hasItemForBuff('instanthealth') ? 'has item' : 'no item'}, ${d.autoBuff.hasBuff('instanthealth') ? 'already buffed' : 'not buffed'}`)
+    console.log(
+      `Tried to apply instant health buff, result: ${result}, ${d.autoBuff.hasItemForBuff('instanthealth') ? 'has item' : 'no item'}, ${d.autoBuff.hasBuff('instanthealth') ? 'already buffed' : 'not buffed'}`,
+    )
     if (
       result !== Results.SUCCESS &&
       result !== Results.ALREADY_BUFFED &&
@@ -62,8 +64,6 @@ export class EatingBehavior extends StateBehavior {
     d.health.markInstantHealthAttempt()
     return await d.autoBuff.applyEffectsToSelf('instanthealth')
   }
-
-
 
   private isActiveRun(runId: number): boolean {
     return this.healRunId === runId

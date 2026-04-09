@@ -327,7 +327,11 @@ export class PearlHandler {
     this.enemyPearlPredictions.delete(entityId)
   }
 
-  getPearlingPlanType(bot: Bot, target?: Entity, lowHealth = false): 'defensive' | 'escape' | 'aggressive' | null {
+  getPearlingPlanType(
+    bot: Bot,
+    target?: Entity,
+    lowHealth = false,
+  ): 'defensive' | 'escape' | 'aggressive' | null {
     if (this.getDefensiveLandingBlock(bot)) return 'defensive'
     if (lowHealth && target && this.getEscapePlan(bot, target)) return 'escape'
     if (target && this.getThrowHuntdownShot(bot, target)) return 'aggressive'
