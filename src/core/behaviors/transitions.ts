@@ -108,11 +108,11 @@ export function buildTransitions() {
     .build()
 
   const eatingToEngaging = getTransition('eatingToEngaging', EatingBehavior, EngagingBehavior)
-    .setShouldTransition((s) => (s as unknown as EatingBehavior).isFinished() && !!pvp(s).entity)
+    .setShouldTransition((s) => s.isFinished() && !!pvp(s).entity)
     .build()
 
   const eatingToIdle = getTransition('eatingToIdle', EatingBehavior, IdleBehavior)
-    .setShouldTransition((s) => (s as unknown as EatingBehavior).isFinished() && !pvp(s).entity)
+    .setShouldTransition((s) => s.isFinished() && !pvp(s).entity)
     .build()
 
   const meleeToPearling = getTransition('meleeToPearling', [...MELEE], PearlingBehavior)

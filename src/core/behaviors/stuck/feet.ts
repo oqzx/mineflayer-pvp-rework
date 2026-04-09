@@ -1,7 +1,7 @@
 import { StateBehavior, getTransition, type StateMachineData } from '@nxg-org/mineflayer-static-statemachine'
 import type { Bot } from 'mineflayer'
 import type { Entity } from 'prismarine-entity'
-import { Vec3 } from 'vec3'
+import type { Vec3 } from 'vec3'
 import type { Block } from 'prismarine-block'
 import { holdJumpForNextTick } from '../../../util/jump-control.js'
 import {

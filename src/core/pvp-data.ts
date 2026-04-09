@@ -1,6 +1,5 @@
 import type { StateMachineData } from '@nxg-org/mineflayer-static-statemachine'
 import type { Entity } from 'prismarine-entity'
-import type { Vec3 } from 'vec3'
 import type { FullConfig } from '../config/types.js'
 import type { AimingEntity, CombatSnapshot, IncomingProjectile } from './combat-state.js'
 import type { SwordCombat } from '../combat/sword-combat.js'

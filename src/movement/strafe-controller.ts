@@ -1,6 +1,6 @@
 import type { Bot, ControlState } from 'mineflayer'
 import type { Entity } from 'prismarine-entity'
-import { Vec3 } from 'vec3'
+import type { Vec3 } from 'vec3'
 import type { StrafeConfig } from '../config/types.js'
 import { getTargetYaw } from '../calc/math.js'
 import { randomIntInRange, shouldTrigger, gaussianNoise } from '../util/humanizer.js'

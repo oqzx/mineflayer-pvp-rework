@@ -38,7 +38,7 @@ import type { BlendWeights } from '../engine/behavior-blend.js'
 import { FatigueManager } from '../engine/fatigue-manager.js'
 import 'mineflayer-pathfinder'
 import { FollowGoal } from '../util/follow-goal.js'
-import { goals } from 'mineflayer-pathfinder'
+import type { goals } from 'mineflayer-pathfinder'
 
 const { getEntityAABB } = AABBUtils
 

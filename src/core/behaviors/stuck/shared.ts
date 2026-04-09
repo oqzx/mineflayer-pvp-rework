@@ -301,7 +301,7 @@ export function shouldStayInStuck(state: { bot: Bot; data: StateMachineData }): 
 
 export function enterStuckState(data: PvpData): void {
   data.sword.stop()
-  data.projectile.stop()
+  void data.projectile.stop()
   data.stuckWaterFailedPlacements.clear()
   data.sword.bot.clearControlStates()
 }
