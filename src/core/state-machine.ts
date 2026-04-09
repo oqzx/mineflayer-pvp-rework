@@ -92,6 +92,7 @@ export class StateMachine extends EventEmitter {
     this.bot.projectiles.detectIncomingProjectiles = true
     this.bot.projectiles.detectAimingEntities = true
 
+    this.bot.ender.maxTicks = 150;
     this.bot.ender.dvStep = 360;
     this.bot.ender.epsilon = 1e-2;
 

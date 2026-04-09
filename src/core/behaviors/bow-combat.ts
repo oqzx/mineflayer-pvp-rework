@@ -6,7 +6,6 @@ import type { PvpData } from '../pvp-data.js'
 export function canEnterBowCombat(data: PvpData): boolean {
   if (!data.config.bow.enabled) return false
   if (!data.entity) return false
-
   return data.projectile.canEngageTarget(data.entity)
 }
 

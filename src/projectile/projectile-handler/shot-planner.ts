@@ -145,7 +145,7 @@ export class ShotPlanner {
             const yaws = AABBUtils.getEntityAABBRaw(target)
                 .toVertices()
                 .map((p) => getTargetYaw(this.bot.entity.position, p))
-                .sort((a, b) => orgYaw - Math.abs(a) - (orgYaw - Math.abs(b)));
+                .sort((a, b) => (orgYaw - Math.abs(a)) - (orgYaw - Math.abs(b)));
             let inbetween = [yaws.pop()!, yaws.pop()!];
             inbetween = inbetween.map((y) => y + Math.sign(orgYaw - y) * 0.02);
             for (const yaw of inbetween) {
