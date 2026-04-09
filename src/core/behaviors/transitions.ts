@@ -163,21 +163,7 @@ export function buildTransitions() {
     .build()
 
   const meleeToRetreat = getTransition('meleeToRetreat', [...MELEE], RetreatBehavior)
-<<<<<<< HEAD
     .setShouldTransition((s) => shouldRetreat(s))
-=======
-    .setShouldTransition((s) => {
-      const d = pvp(s)
-      if (!d.health.isLow) return false
-      const hasPearl = s.bot.inventory
-        .items()
-        .some((i: { name: string }) => i.name === 'ender_pearl')
-      if (hasPearl && d.config.pearl.enabled) return false
-      const hasGapple = d.gap.findGoldenApple(s.bot)
-      if (hasGapple) return false
-      return d.health.isCritical || d.health.current <= d.config.lowHealth.threshold
-    })
->>>>>>> 93b3927ee0d09f0bd8bdfbf1dbd2406a1767ffc8
     .build()
 
   const retreatToEngaging = getTransition('retreatToEngaging', RetreatBehavior, EngagingBehavior)
