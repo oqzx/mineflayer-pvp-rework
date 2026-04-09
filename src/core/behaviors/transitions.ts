@@ -36,7 +36,9 @@ function needsHeal(s: AnyState): boolean {
 function logPearlTransitionDecision(s: AnyState, allowed: boolean, reason: string): void {
   const d = pvp(s)
   const targetId = d.entity?.id ?? 'none'
-  console.log(`[pearl-transition] tick=${d.tick} allowed=${allowed} reason=${reason} target=${targetId}`)
+  console.log(
+    `[pearl-transition] tick=${d.tick} allowed=${allowed} reason=${reason} target=${targetId}`,
+  )
 }
 
 export function buildTransitions() {
@@ -80,7 +82,9 @@ export function buildTransitions() {
     .setShouldTransition((s) => {
       const d = pvp(s)
       if (!d.health.isLow) return false
-      const hasPearl = s.bot.inventory.items().some((i: { name: string }) => i.name === 'ender_pearl')
+      const hasPearl = s.bot.inventory
+        .items()
+        .some((i: { name: string }) => i.name === 'ender_pearl')
       if (hasPearl && d.config.pearl.enabled) return false
       const hasGapple = d.gap.findGoldenApple(s.bot)
       if (hasGapple) return false
@@ -137,7 +141,7 @@ export function buildTransitions() {
   const pearlingToIdle = getTransition('pearlingToIdle', PearlingBehavior, IdleBehavior)
     .setShouldTransition((s) => (s as unknown as PearlingBehavior).isFinished() && !pvp(s).entity)
     .build()
-  
+
   const meleeToBow = getTransition('meleeToBow', [...MELEE], BowCombatBehavior)
     .setShouldTransition((s) => {
       const d = pvp(s)

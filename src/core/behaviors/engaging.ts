@@ -29,6 +29,5 @@ export class EngagingBehavior extends StateBehavior {
     return false
   }
 
-
   onStateExited(): void {}
 }

@@ -54,7 +54,6 @@ type BotWithPathfinder = Bot & {
   }
 }
 
-
 export class SwordCombat extends EventEmitter {
   public target: Entity | undefined = undefined
   public lastTarget: Entity | undefined = undefined
@@ -162,7 +161,7 @@ export class SwordCombat extends EventEmitter {
   }
 
   async equipBestWeapon(): Promise<void> {
-      const weapon = this.findWeapon()
+    const weapon = this.findWeapon()
     if (weapon) await this.equip(weapon)
   }
 
@@ -193,9 +192,7 @@ export class SwordCombat extends EventEmitter {
     }
   }
 
-  private debugSnapshot(
-    cpsState = this.cps.getDebugState(this.currentTick),
-  ) {
+  private debugSnapshot(cpsState = this.cps.getDebugState(this.currentTick)) {
     return {
       target: this.target,
       phase: this.combo.state,
@@ -380,7 +377,8 @@ export class SwordCombat extends EventEmitter {
   }
 
   private processShieldReactivate(): void {
-    if (this.shieldReactivateAtTick === null || this.currentTick < this.shieldReactivateAtTick) return
+    if (this.shieldReactivateAtTick === null || this.currentTick < this.shieldReactivateAtTick)
+      return
 
     this.shieldReactivateAtTick = null
     if (this.shield.isEquipped(this.bot)) {
@@ -412,7 +410,10 @@ export class SwordCombat extends EventEmitter {
     const tooClose = this.botReach() > this.config.generic.tooCloseRange
     shouldApproach = shouldApproach && tooClose
 
-    if (shouldTrigger(this.config.humanization.sprintToggleNoiseProbability * 0.5) && shouldApproach) {
+    if (
+      shouldTrigger(this.config.humanization.sprintToggleNoiseProbability * 0.5) &&
+      shouldApproach
+    ) {
       shouldApproach = false
     }
 
@@ -817,7 +818,12 @@ export class SwordCombat extends EventEmitter {
     if (!this.followGoal || !isSameTargetGoal) {
       this.stopFollow()
       const predictTicks = this.config.follow.predictive ? this.config.follow.predictTicks : 0
-      this.followGoal = new FollowGoal(this.bot, this.target, this.config.follow.distance, predictTicks)
+      this.followGoal = new FollowGoal(
+        this.bot,
+        this.target,
+        this.config.follow.distance,
+        predictTicks,
+      )
       this.followGoalTargetId = this.target.id
     }
 

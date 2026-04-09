@@ -32,9 +32,9 @@ export class WTapController {
     while (attempts < 6) {
       const reach = bot.entity.position.distanceTo(target.position)
       const speed =
-        (bot as unknown as { tracker?: { getEntitySpeed(e: Entity): Vec3 | null } }).tracker?.getEntitySpeed(
-          target,
-        ) ?? new Vec3(0, 0, 0)
+        (
+          bot as unknown as { tracker?: { getEntitySpeed(e: Entity): Vec3 | null } }
+        ).tracker?.getEntitySpeed(target) ?? new Vec3(0, 0, 0)
 
       const lookOk = movingAt(target.position, bot.entity.position, speed, PI_OVER_3)
       if (!lookOk || reach > attackRange + 0.2) break

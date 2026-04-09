@@ -41,7 +41,9 @@ export class EatingBehavior extends StateBehavior {
 
     const result = await this.tryInstantHealth(d, runId)
     if (!this.isActiveRun(runId)) return
-    console.log(`Tried to apply instant health buff, result: ${result}, ${d.autoBuff.hasItemForBuff('instanthealth') ? 'has item' : 'no item'}, ${d.autoBuff.hasBuff('instanthealth') ? 'already buffed' : 'not buffed'}`)
+    console.log(
+      `Tried to apply instant health buff, result: ${result}, ${d.autoBuff.hasItemForBuff('instanthealth') ? 'has item' : 'no item'}, ${d.autoBuff.hasBuff('instanthealth') ? 'already buffed' : 'not buffed'}`,
+    )
     if (
       result !== Results.SUCCESS &&
       result !== Results.ALREADY_BUFFED &&
@@ -58,7 +60,10 @@ export class EatingBehavior extends StateBehavior {
     if (!d.health.canAttemptInstantHealth()) return Results.FAIL
     if (d.autoBuff.hasBuff('instanthealth')) return Results.ALREADY_BUFFED
     if (!d.autoBuff.hasItemForBuff('instanthealth')) return Results.FAIL
-    const grounded = await this.waitUntilGrounded(EatingBehavior.INSTANT_HEALTH_GROUND_WAIT_TICKS, runId)
+    const grounded = await this.waitUntilGrounded(
+      EatingBehavior.INSTANT_HEALTH_GROUND_WAIT_TICKS,
+      runId,
+    )
     if (!grounded || !this.isActiveRun(runId)) return Results.FAIL
     d.health.markInstantHealthAttempt()
     return await d.autoBuff.applyEffectsToSelf('instanthealth')

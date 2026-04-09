@@ -9,10 +9,7 @@ import { createSnapshot } from './combat-state.js'
 import { SwordCombat } from '../combat/sword-combat.js'
 import { ProjectileHandler } from '../projectile/projectile-handler'
 import { PearlHandler } from '../projectile/pearl-handler.js'
-import {
-  DodgeController,
-  classifyProjectile,
-} from '../movement/dodge-controller.js'
+import { DodgeController, classifyProjectile } from '../movement/dodge-controller.js'
 import { GapHandler } from '../tactics/gap-handler.js'
 import { HealthManager } from '../health/health-manager.js'
 import { PotionHandler } from '../health/potion-handler.js'
@@ -91,9 +88,9 @@ export class StateMachine extends EventEmitter {
     this.bot.projectiles.detectIncomingProjectiles = true
     this.bot.projectiles.detectAimingEntities = true
 
-    this.bot.ender.maxTicks = 150;
-    this.bot.ender.dvStep = 360;
-    this.bot.ender.epsilon = 1e-2;
+    this.bot.ender.maxTicks = 150
+    this.bot.ender.dvStep = 360
+    this.bot.ender.epsilon = 1e-2
 
     sword.on('attackedTarget', (t: Entity) => {
       console.log(`[event] tick=${this.tick} attackedTarget -> ${t.username ?? t.name ?? t.id}`)
@@ -199,7 +196,6 @@ export class StateMachine extends EventEmitter {
       .map((info) => this.mapTrackedThreat(info))
       .sort((a, b) => a.estimatedImpactTick - b.estimatedImpactTick)
 
-
     this.data.aimingEntities = this.bot.projectiles
       .getAimingEntities()
       .map((info) => {
@@ -244,7 +240,6 @@ export class StateMachine extends EventEmitter {
   }
 
   private onEntitySpawn = async (entity: Entity): Promise<void> => {
-
     // lol rough fix for testing
     // while (true) {
     //   if (entity.velocity.floored().equals(entity.velocity))
@@ -252,32 +247,37 @@ export class StateMachine extends EventEmitter {
     //   else break
     // }
 
-    console.log(entity.position, this.data.entity?.position, this.data.entity?.position.distanceTo(entity.position))
-
+    console.log(
+      entity.position,
+      this.data.entity?.position,
+      this.data.entity?.position.distanceTo(entity.position),
+    )
 
     await new Promise<void>((res) => {
       const listener = async (e: Entity) => {
-      
-          if (e.id !== entity.id) return;
-          if (e.type === "player") return;
-            const magnitude = Math.sqrt(Math.pow(entity.velocity.x, 2) + Math.pow(entity.velocity.y, 2) + Math.pow(entity.velocity.z, 2))
-        console.log("entity magnitude", magnitude)
+        if (e.id !== entity.id) return
+        if (e.type === 'player') return
+        const magnitude = Math.sqrt(
+          Math.pow(entity.velocity.x, 2) +
+            Math.pow(entity.velocity.y, 2) +
+            Math.pow(entity.velocity.z, 2),
+        )
+        console.log('entity magnitude', magnitude)
 
-          this.data.pearl.onEntitySpawn(this.bot, entity, this.tick, this.data.entity)
-          this.bot.off("entityMoved", listener)
-          this.bot.off("entityVelocity", listener);
-          res()
-        }
-    
-        this.bot.on("entityMoved", listener);
-        this.bot.on("entityVelocity", listener);
+        this.data.pearl.onEntitySpawn(this.bot, entity, this.tick, this.data.entity)
+        this.bot.off('entityMoved', listener)
+        this.bot.off('entityVelocity', listener)
+        res()
+      }
 
-      
-        setTimeout(() => {
-      this.bot.off("entityMoved", listener)
-        this.bot.off("entityVelocity", listener)
-        res();
-        }, 500);
+      this.bot.on('entityMoved', listener)
+      this.bot.on('entityVelocity', listener)
+
+      setTimeout(() => {
+        this.bot.off('entityMoved', listener)
+        this.bot.off('entityVelocity', listener)
+        res()
+      }, 500)
     })
   }
 

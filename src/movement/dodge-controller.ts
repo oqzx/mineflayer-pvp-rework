@@ -12,12 +12,11 @@ const PHYSICS_TICK_MS = 50
 
 export function classifyProjectile(entity: Entity): IncomingProjectile['type'] | null {
   const name = entity.name?.toLowerCase() ?? ''
-  if (ARROW_ENTITY_NAMES.findIndex(p=>name.includes(p)) !== -1) return 'arrow'
-  if (FIREBALL_ENTITY_NAMES.findIndex(p=>name.includes(p)) !== -1) return 'fireball'
+  if (ARROW_ENTITY_NAMES.findIndex((p) => name.includes(p)) !== -1) return 'arrow'
+  if (FIREBALL_ENTITY_NAMES.findIndex((p) => name.includes(p)) !== -1) return 'fireball'
   if (name === 'ender_pearl') return 'pearl'
   return null
 }
-
 
 export function estimateImpactTick(projectile: Entity, target: Entity): number {
   const speed = vectorMagnitude(projectile.velocity)

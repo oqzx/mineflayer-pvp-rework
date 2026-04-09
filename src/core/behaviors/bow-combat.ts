@@ -18,7 +18,7 @@ export class BowCombatBehavior extends StateBehavior {
 
   onStateEntered(): void {
     const d = this.data as PvpData
-    console.log("in combat", canEnterBowCombat(d))
+    console.log('in combat', canEnterBowCombat(d))
     if (!canEnterBowCombat(d)) return
     const target = d.entity
     if (!target) return
@@ -28,7 +28,7 @@ export class BowCombatBehavior extends StateBehavior {
 
   update(): void {
     const d = this.data as PvpData
-      console.log("in combat", canEnterBowCombat(d))
+    console.log('in combat', canEnterBowCombat(d))
     if (!canEnterBowCombat(d)) return
     const target = d.entity
     if (!target) return

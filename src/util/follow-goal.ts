@@ -1,7 +1,7 @@
-import type { Bot } from "mineflayer"
-import { goals } from "mineflayer-pathfinder"
-import type { Entity } from "prismarine-entity"
-import { Vec3 } from "vec3"
+import type { Bot } from 'mineflayer'
+import { goals } from 'mineflayer-pathfinder'
+import type { Entity } from 'prismarine-entity'
+import { Vec3 } from 'vec3'
 
 export class FollowGoal extends goals.Goal {
   private readonly rangeSq: number
