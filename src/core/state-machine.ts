@@ -9,10 +9,7 @@ import { createSnapshot } from './combat-state.js'
 import { SwordCombat } from '../combat/sword-combat.js'
 import { ProjectileHandler } from '../projectile/projectile-handler'
 import { PearlHandler } from '../projectile/pearl-handler.js'
-import {
-  DodgeController,
-  classifyProjectile,
-} from '../movement/dodge-controller.js'
+import { DodgeController, classifyProjectile } from '../movement/dodge-controller.js'
 import { GapHandler } from '../tactics/gap-handler.js'
 import { HealthManager } from '../health/health-manager.js'
 import { PotionHandler } from '../health/potion-handler.js'
@@ -211,7 +208,6 @@ export class StateMachine extends EventEmitter {
       .map((info) => this.mapTrackedThreat(info))
       .sort((a, b) => a.estimatedImpactTick - b.estimatedImpactTick)
 
-
     this.data.aimingEntities = this.bot.projectiles
       .getAimingEntities()
       .map((info) => {
@@ -256,16 +252,12 @@ export class StateMachine extends EventEmitter {
   }
 
   private onEntitySpawn = async (entity: Entity): Promise<void> => {
-
     // lol rough fix for testing
     // while (true) {
     //   if (entity.velocity.floored().equals(entity.velocity))
     //   await new Promise((res) => setTimeout(res, 10))
     //   else break
     // }
-
-    // console.log(entity.position, this.data.entity?.position, this.data.entity?.position.distanceTo(entity.position))
-
 
     await new Promise<void>((res) => {
       const listener = async (e: Entity) => {

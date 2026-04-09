@@ -15,11 +15,7 @@ export type AttackDebugSnapshot = {
 export class AttackDebugger {
   constructor(private readonly enabled: boolean) {}
 
-  skip(
-    reason: string,
-    snapshot: AttackDebugSnapshot,
-    details: Record<string, unknown> = {},
-  ): void {
+  skip(reason: string, snapshot: AttackDebugSnapshot, details: Record<string, unknown> = {}): void {
     if (!this.enabled) return
     const targetName =
       snapshot.target?.username ??

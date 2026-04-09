@@ -1,4 +1,8 @@
-import { StateBehavior, getTransition, type StateMachineData } from '@nxg-org/mineflayer-static-statemachine'
+import {
+  StateBehavior,
+  getTransition,
+  type StateMachineData,
+} from '@nxg-org/mineflayer-static-statemachine'
 import type { Bot } from 'mineflayer'
 import type { Entity } from 'prismarine-entity'
 import type { Vec3 } from 'vec3'
@@ -178,7 +182,11 @@ export function buildFeetStuckTransitions(exitState: typeof StateBehavior) {
       .setRuntimeEnterFn((state) => getFloorTrap(state.bot))
       .build(),
 
-    getTransition('feetAssessToBreakFloorCobweb', StuckFeetAssessBehavior, StuckBreakFloorCobwebBehavior)
+    getTransition(
+      'feetAssessToBreakFloorCobweb',
+      StuckFeetAssessBehavior,
+      StuckBreakFloorCobwebBehavior,
+    )
       .setShouldTransition((state) => shouldBreakFloorCobweb(state.bot))
       .setRuntimeEnterFn((state) => getFloorTrap(state.bot))
       .build(),
@@ -204,11 +212,19 @@ export function buildFeetStuckTransitions(exitState: typeof StateBehavior) {
       .setShouldTransition(isFinished)
       .build(),
 
-    getTransition('breakFloorCobwebToFeetAssess', StuckBreakFloorCobwebBehavior, StuckFeetAssessBehavior)
+    getTransition(
+      'breakFloorCobwebToFeetAssess',
+      StuckBreakFloorCobwebBehavior,
+      StuckFeetAssessBehavior,
+    )
       .setShouldTransition(isFinished)
       .build(),
 
-    getTransition('feetMoveEscapeToFeetAssess', StuckFeetMoveEscapeBehavior, StuckFeetAssessBehavior)
+    getTransition(
+      'feetMoveEscapeToFeetAssess',
+      StuckFeetMoveEscapeBehavior,
+      StuckFeetAssessBehavior,
+    )
       .setShouldTransition(isFinished)
       .build(),
   ]

@@ -28,7 +28,8 @@ export function simulateProjectile(
   weaponName: string,
   maxTicks = 120,
 ): TrajectoryResult {
-  const info = trajectoryInfo[weaponName] ?? trajectoryInfo['bow'] ?? { v0: 3.0, g: 0.05, drag: 0.99 }
+  const info = trajectoryInfo[weaponName] ??
+    trajectoryInfo['bow'] ?? { v0: 3.0, g: 0.05, drag: 0.99 }
   const vel = yawPitchToDir(yaw, pitch, info.v0)
   const pos = origin.clone()
   const points: TrajectoryPoint[] = []
@@ -95,11 +96,7 @@ function verticalAtHDist(
   return null
 }
 
-export function solvePitch(
-  hDist: number,
-  vDist: number,
-  weaponName: string,
-): number | null {
+export function solvePitch(hDist: number, vDist: number, weaponName: string): number | null {
   if (hDist < 0.001) return -Math.PI / 2
 
   let lo = -Math.PI * 0.44

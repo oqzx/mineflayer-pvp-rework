@@ -31,7 +31,9 @@ export class PearlingBehavior extends StateBehavior {
   onStateExited(): void {
     const d = this.data as PvpData
     const stateTicks = this.enteredTick === null ? 0 : d.tick - this.enteredTick
-    console.log(`[pearling-state] exit tick=${d.tick} stateTicks=${stateTicks} target=${d.entity?.id ?? 'none'}`)
+    console.log(
+      `[pearling-state] exit tick=${d.tick} stateTicks=${stateTicks} target=${d.entity?.id ?? 'none'}`,
+    )
     this.done = false
     this.enteredTick = null
     this.executeStartedTick = null
@@ -58,7 +60,9 @@ export class PearlingBehavior extends StateBehavior {
     }
 
     const executeTicks = this.executeStartedTick === null ? 0 : d.tick - this.executeStartedTick
-    console.log(`[pearling-state] execute end tick=${d.tick} executeTicks=${executeTicks} target=${d.entity?.id ?? 'none'}`)
+    console.log(
+      `[pearling-state] execute end tick=${d.tick} executeTicks=${executeTicks} target=${d.entity?.id ?? 'none'}`,
+    )
     this.done = true
   }
 }

@@ -18,7 +18,11 @@ export type EnemyPearlPrediction = {
   estimatedLandPos: Vec3
 }
 
-function findSafeLandingBlock(bot: Bot, searchRadius: number, avoidPositions: Vec3[]): Block | null {
+function findSafeLandingBlock(
+  bot: Bot,
+  searchRadius: number,
+  avoidPositions: Vec3[],
+): Block | null {
   const origin = bot.entity.position
   const candidates: Block[] = []
 
@@ -37,7 +41,9 @@ function findSafeLandingBlock(bot: Bot, searchRadius: number, avoidPositions: Ve
 
   return (
     candidates
-      .filter((block) => avoidPositions.every((ap) => block.position.offset(0.5, 1, 0.5).distanceTo(ap) > 3))
+      .filter((block) =>
+        avoidPositions.every((ap) => block.position.offset(0.5, 1, 0.5).distanceTo(ap) > 3),
+      )
       .sort((a, b) => a.position.distanceTo(origin) - b.position.distanceTo(origin))[0] ?? null
   )
 }
@@ -90,7 +96,7 @@ export class PearlHandler {
   private readonly enemyPearlPredictions = new Map<number, EnemyPearlPrediction>()
   private escapePlanCache: EscapePlanCacheEntry | null = null
 
-  constructor(private readonly config: PearlConfig) { }
+  constructor(private readonly config: PearlConfig) {}
 
   get isThrowing(): boolean {
     return this.throwing
@@ -152,7 +158,10 @@ export class PearlHandler {
   }
 
   shouldThrowAggressive(bot: Bot, target: Entity): boolean {
-    return this.getThrowHuntdownShot(bot, target) !== null || this.getAggressiveShot(bot, target) !== null
+    return (
+      this.getThrowHuntdownShot(bot, target) !== null ||
+      this.getAggressiveShot(bot, target) !== null
+    )
   }
 
   shouldThrowDefensive(bot: Bot): boolean {
@@ -205,7 +214,9 @@ export class PearlHandler {
   async throwDefensive(bot: Bot, enemies: Entity[]): Promise<boolean> {
     const safeBlock = this.getDefensiveLandingBlock(bot, enemies)
     if (!safeBlock) {
-      console.log(`[pearl-handler] defensive aborted reason=no-safe-block phase=${this.getTrackerPhase(bot)}`)
+      console.log(
+        `[pearl-handler] defensive aborted reason=no-safe-block phase=${this.getTrackerPhase(bot)}`,
+      )
       return false
     }
 
@@ -220,7 +231,9 @@ export class PearlHandler {
   async throwEscape(bot: Bot, enemy: Entity): Promise<boolean> {
     const plan = this.getEscapePlan(bot, enemy)
     if (!plan) {
-      console.log(`[pearl-handler] escape aborted enemy=${enemy.id} reason=no-safe-block phase=${this.getTrackerPhase(bot)}`)
+      console.log(
+        `[pearl-handler] escape aborted enemy=${enemy.id} reason=no-safe-block phase=${this.getTrackerPhase(bot)}`,
+      )
       return false
     }
 
@@ -265,7 +278,10 @@ export class PearlHandler {
       .filter((candidate): candidate is Entity => {
         return candidate.type === 'player' && candidate.id !== bot.entity.id
       })
-      .sort((a, b) => entity.position.xzDistanceTo(a.position) - entity.position.xzDistanceTo(b.position))[0]
+      .sort(
+        (a, b) =>
+          entity.position.xzDistanceTo(a.position) - entity.position.xzDistanceTo(b.position),
+      )[0]
 
     const throwerId = closestPlayer?.id ?? null
 
@@ -278,11 +294,11 @@ export class PearlHandler {
     // const mag = Math.sqrt(Math.pow(entity.velocity.x, 2) + Math.pow(entity.velocity.y, 2) + Math.pow(entity.velocity.z, 2))
     // console.log(`Tracking pearl ${entity.id} from thrower ${throwerId} with velocity ${entity.velocity} (mag=${mag.toFixed(2)})`)
 
-    const calcs = new InterceptFunctions(bot);
-    const shot = EnderShotFactory.fromEntity(entity, bot, calcs);
+    const calcs = new InterceptFunctions(bot)
+    const shot = EnderShotFactory.fromEntity(entity, bot, calcs)
 
     const fakePos = new Vec3(0, 0, 0)
-    const sim = shot.calcToAABB(AABB.fromBlock(fakePos), fakePos, true);
+    const sim = shot.calcToAABB(AABB.fromBlock(fakePos), fakePos, true)
 
     // console.log(sim, shot.points, shot.pointVelocities)
     // console.log(shot.points.map((p) => p.toString()).join(' -> '), `simulated land=${sim.block?.position.offset(0,1,0) ?? 'unknown'} in ${sim.totalTicks} ticks`)
@@ -290,12 +306,12 @@ export class PearlHandler {
     // const mags = shot.pointVelocities.map((v) => Math.sqrt(Math.pow(v.x, 2) + Math.pow(v.y, 2) + Math.pow(v.z, 2)))
     // console.log('velocity mags', mags.map((m) => m.toFixed(2)).join(', '))
 
-    const landing = sim.block?.position.offset(0,1,0) ?? fakePos
+    const landing = sim.block?.position.offset(0, 1, 0) ?? fakePos
     this.enemyPearlPredictions.set(entity.id, {
       pearlEntity: entity,
       throwerId,
       estimatedLandTick: tick + sim.totalTicks,
-      estimatedLandPos: landing
+      estimatedLandPos: landing,
     })
     console.log(
       `[pearl-handler] tracked enemy pearl pearl=${entity.id} thrower=${throwerId} target=${target?.id} land=${landing} landTick=${sim.totalTicks}`,
@@ -322,8 +338,9 @@ export class PearlHandler {
   private getThrowHuntdownShot(bot: Bot, target: Entity): HuntdownPearlPlan | null {
     if (!this.config.throwHuntdown || !this.config.enabled || !this.canThrowPearl(bot)) return null
 
-    const prediction = Array.from(this.enemyPearlPredictions.values())
-      .find((entry) => entry.throwerId === target.id)
+    const prediction = Array.from(this.enemyPearlPredictions.values()).find(
+      (entry) => entry.throwerId === target.id,
+    )
     if (!prediction) return null
 
     const orgBlockPos = prediction.estimatedLandPos.offset(0.5, 0, 0.5)
@@ -342,8 +359,6 @@ export class PearlHandler {
       targetPos: orgBlockPos,
     }
   }
-
- 
 
   private getAggressiveShot(bot: Bot, target: Entity): AggressivePearlPlan | null {
     if (!this.config.enabled || !this.canThrowPearl(bot)) return null

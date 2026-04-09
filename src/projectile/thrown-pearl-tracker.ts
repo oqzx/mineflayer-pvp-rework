@@ -2,7 +2,12 @@ import type { Bot } from 'mineflayer'
 import type { Entity } from 'prismarine-entity'
 import type { Vec3 } from 'vec3'
 
-type PearlTrackPhase = 'idle' | 'preparing-throw' | 'awaiting-spawn' | 'in-flight' | 'awaiting-teleport'
+type PearlTrackPhase =
+  | 'idle'
+  | 'preparing-throw'
+  | 'awaiting-spawn'
+  | 'in-flight'
+  | 'awaiting-teleport'
 
 type PearlTrackState = {
   phase: PearlTrackPhase
@@ -81,7 +86,10 @@ export class ThrownPearlTracker {
     }
 
     if (state.phase === 'awaiting-teleport' && elapsed > TELEPORT_TIMEOUT_MS) {
-      logTracker(bot, `expire awaiting-teleport elapsed=${elapsed}ms timeout=${TELEPORT_TIMEOUT_MS}ms`)
+      logTracker(
+        bot,
+        `expire awaiting-teleport elapsed=${elapsed}ms timeout=${TELEPORT_TIMEOUT_MS}ms`,
+      )
       this.reset(bot)
     }
   }
@@ -147,7 +155,7 @@ export class ThrownPearlTracker {
     if (state.phase !== 'awaiting-spawn') return
     if (!state.throwOrigin) return
     if (!entity.name?.includes('pearl')) return
-   
+
     if (entity.position.distanceTo(state.throwOrigin) > SPAWN_RADIUS) return
 
     logTracker(bot, `spawn matched entity=${entity.id} name=${entity.name} pos=${entity.position}`)
@@ -165,7 +173,10 @@ export class ThrownPearlTracker {
     const state = this.getState(bot)
     if (state.phase !== 'in-flight' || state.pearlEntityId !== entity.id) return
 
-    logTracker(bot, `entity gone entity=${entity.id}; awaiting teleport from=${bot.entity.position}`)
+    logTracker(
+      bot,
+      `entity gone entity=${entity.id}; awaiting teleport from=${bot.entity.position}`,
+    )
     this.states.set(bot, {
       phase: 'awaiting-teleport',
       startedAt: now(),

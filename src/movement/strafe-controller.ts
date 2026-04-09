@@ -7,12 +7,7 @@ import { randomIntInRange, shouldTrigger, gaussianNoise } from '../util/humanize
 
 type StrafeMode = 'circle' | 'random' | 'intelligent' | 'predictive'
 
-type StrafePattern =
-  | 'sustained'
-  | 'burst'
-  | 'oscillate'
-  | 'feint'
-  | 'freeze'
+type StrafePattern = 'sustained' | 'burst' | 'oscillate' | 'feint' | 'freeze'
 
 export class StrafeController {
   private currentDir: ControlState | undefined = undefined
@@ -67,9 +62,7 @@ export class StrafeController {
     }
 
     const pauseProb =
-      this.config.pauseProbability *
-      (1 / Math.max(0.1, fatigueMultiplier)) *
-      (inRange ? 0.2 : 1.0)
+      this.config.pauseProbability * (1 / Math.max(0.1, fatigueMultiplier)) * (inRange ? 0.2 : 1.0)
 
     if (shouldTrigger(pauseProb)) {
       this.pauseTicksLeft = randomIntInRange(this.config.pauseDurationTicks)
@@ -129,7 +122,7 @@ export class StrafeController {
     if (rand < 0.28) {
       this.pattern = 'sustained'
       this.patternTicksLeft = randomIntInRange({ min: 8, max: 22 })
-    } else if (rand < 0.50) {
+    } else if (rand < 0.5) {
       this.pattern = 'burst'
       this.patternTicksLeft = randomIntInRange({ min: 3, max: 7 })
       this.burstTicksLeft = this.patternTicksLeft
