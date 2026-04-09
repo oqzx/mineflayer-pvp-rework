@@ -68,14 +68,27 @@ type EscapePearlPlan = {
   block: Block
 }
 
+type EscapePlanCacheEntry = {
+  key: string
+  plan: EscapePearlPlan | null
+}
+
+type EscapeCandidate = {
+  block: Block
+  score: number
+}
+
 const MIN_ESCAPE_TRIGGER_DISTANCE = 6
 const MIN_ESCAPE_LANDING_DISTANCE = 8
 const MIN_ESCAPE_DISTANCE_GAIN = 5
+const MAX_ESCAPE_SHOT_CHECKS = 8
+const ENDER_PEARL_DAMAGE = 5
 
 export class PearlHandler {
   private throwing = false
   private readonly tracker = ThrownPearlTracker.instance
   private readonly enemyPearlPredictions = new Map<number, EnemyPearlPrediction>()
+  private escapePlanCache: EscapePlanCacheEntry | null = null
 
   constructor(private readonly config: PearlConfig) { }
 
@@ -93,6 +106,10 @@ export class PearlHandler {
 
   canThrowPearl(bot: Bot): boolean {
     return !this.throwing && this.tracker.canStartThrow(bot) && bot.ender.hasPearls()
+  }
+
+  canSurvivePearl(bot: Bot): boolean {
+    return (bot.health ?? 20) > ENDER_PEARL_DAMAGE
   }
 
   shouldEnterPearling(bot: Bot, target?: Entity, lowHealth = false): boolean {
@@ -218,20 +235,24 @@ export class PearlHandler {
   }
 
   onEntitySpawn(bot: Bot, entity: Entity, tick?: number, target?: Entity): void {
+    this.clearPlanCaches()
     this.tracker.onEntitySpawn(bot, entity)
     if (tick !== undefined) this.trackEnemyPearl(bot, entity, tick, target)
   }
 
   onEntityGone(bot: Bot, entity: Entity): void {
+    this.clearPlanCaches()
     this.tracker.onEntityGone(bot, entity)
     this.removeEnemyPearl(entity.id)
   }
 
   onBotMove(bot: Bot, previousPosition?: Vec3): void {
+    this.clearPlanCaches()
     this.tracker.onBotMove(bot, previousPosition)
   }
 
   onForcedMove(bot: Bot): void {
+    this.clearPlanCaches()
     this.tracker.onForcedMove(bot)
   }
 
@@ -286,10 +307,11 @@ export class PearlHandler {
   }
 
   removeEnemyPearl(entityId: number): void {
+    this.clearPlanCaches()
     this.enemyPearlPredictions.delete(entityId)
   }
 
-  private getPearlingPlanType(bot: Bot, target?: Entity, lowHealth = false): 'defensive' | 'escape' | 'aggressive' | null {
+  getPearlingPlanType(bot: Bot, target?: Entity, lowHealth = false): 'defensive' | 'escape' | 'aggressive' | null {
     if (this.getDefensiveLandingBlock(bot)) return 'defensive'
     if (lowHealth && target && this.getEscapePlan(bot, target)) return 'escape'
     if (target && this.getThrowHuntdownShot(bot, target)) return 'aggressive'
@@ -359,21 +381,31 @@ export class PearlHandler {
   }
 
   private getEscapePlan(bot: Bot, enemy: Entity): EscapePearlPlan | null {
+    const cacheKey = this.getEscapePlanCacheKey(bot, enemy)
+    if (this.escapePlanCache?.key === cacheKey) {
+      return this.escapePlanCache.plan
+    }
+
     if (!this.config.enabled || !this.canThrowPearl(bot)) return null
 
     const botPos = bot.entity.position
     const enemyPos = enemy.position
     const currentDistance = botPos.distanceTo(enemyPos)
-    if (currentDistance >= MIN_ESCAPE_TRIGGER_DISTANCE) return null
+    if (currentDistance >= MIN_ESCAPE_TRIGGER_DISTANCE) {
+      this.escapePlanCache = { key: cacheKey, plan: null }
+      return null
+    }
 
     const away = botPos.minus(enemyPos)
     const horizontalAway = new Vec3(away.x, 0, away.z)
-    if (horizontalAway.norm() < 1e-6) return null
+    if (horizontalAway.norm() < 1e-6) {
+      this.escapePlanCache = { key: cacheKey, plan: null }
+      return null
+    }
 
     const awayDir = horizontalAway.normalize()
     const jitters = [-2, 0, 2]
-    let bestPlan: EscapePearlPlan | null = null
-    let bestScore = -Infinity
+    const candidates: EscapeCandidate[] = []
 
     for (let dist = 8; dist <= 20; dist += 4) {
       for (let yOff = 0; yOff <= 4; yOff++) {
@@ -390,9 +422,6 @@ export class PearlHandler {
             if (!ground || ground.name === 'air') continue
             if (air1?.name !== 'air' || air2?.name !== 'air') continue
 
-            const shot = bot.ender.shotToBlock(ground)
-            if (!shot?.hit) continue
-
             const landing = ground.position.offset(0.5, 1, 0.5)
             const enemyDistance = landing.distanceTo(enemyPos)
             const botDistance = landing.distanceTo(botPos)
@@ -400,20 +429,37 @@ export class PearlHandler {
             if (botDistance < MIN_ESCAPE_LANDING_DISTANCE) continue
             if (distanceGain < MIN_ESCAPE_DISTANCE_GAIN) continue
 
-            const score = enemyDistance * 2 + botDistance + distanceGain * 3 - Math.abs(yOff) * 0.5
-            if (score > bestScore) {
-              bestScore = score
-              bestPlan = { block: ground }
-            }
+            const alignment = awayDir.dot(landing.minus(botPos).normalize())
+            const score =
+              enemyDistance * 2 +
+              botDistance +
+              distanceGain * 3 +
+              alignment * 4 -
+              Math.abs(yOff) * 0.5 -
+              (Math.abs(xJitter) + Math.abs(zJitter)) * 0.15
+
+            candidates.push({ block: ground, score })
           }
         }
       }
     }
 
+    candidates.sort((a, b) => b.score - a.score)
+
+    let bestPlan: EscapePearlPlan | null = null
+    for (const candidate of candidates.slice(0, MAX_ESCAPE_SHOT_CHECKS)) {
+      const shot = bot.ender.shotToBlock(candidate.block)
+      if (!shot?.hit) continue
+      bestPlan = { block: candidate.block }
+      break
+    }
+
+    this.escapePlanCache = { key: cacheKey, plan: bestPlan }
     return bestPlan
   }
 
   private async executeThrow(bot: Bot, action: () => Promise<boolean | void>): Promise<boolean> {
+    this.clearPlanCaches()
     if (!this.tracker.beginPrepareThrow(bot, bot.entity.position)) {
       console.log(`[pearl-handler] executeThrow blocked phase=${this.getTrackerPhase(bot)}`)
       return false
@@ -436,6 +482,28 @@ export class PearlHandler {
       throw error
     } finally {
       this.throwing = false
+      this.clearPlanCaches()
     }
+  }
+
+  private clearPlanCaches(): void {
+    this.escapePlanCache = null
+  }
+
+  private getEscapePlanCacheKey(bot: Bot, enemy: Entity): string {
+    const botPos = bot.entity.position
+    const enemyPos = enemy.position
+    return [
+      bot.time.age,
+      this.throwing ? '1' : '0',
+      this.getTrackerPhase(bot),
+      enemy.id,
+      botPos.x.toFixed(3),
+      botPos.y.toFixed(3),
+      botPos.z.toFixed(3),
+      enemyPos.x.toFixed(3),
+      enemyPos.y.toFixed(3),
+      enemyPos.z.toFixed(3),
+    ].join('|')
   }
 }

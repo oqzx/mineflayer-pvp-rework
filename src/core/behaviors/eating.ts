@@ -6,10 +6,8 @@ import type { PvpData } from '../pvp-data.js'
 
 export class EatingBehavior extends StateBehavior {
   static readonly stateName = 'Eating'
-  private static readonly INSTANT_HEALTH_GROUND_WAIT_TICKS = 12
 
   private done = false
-  private healRunId = 0
 
   constructor(bot: Bot, data: StateMachineData) {
     super(bot, data)
@@ -17,8 +15,7 @@ export class EatingBehavior extends StateBehavior {
 
   onStateEntered(): void {
     this.done = false
-    const runId = ++this.healRunId
-    void this.heal(runId)
+    void this.heal()
   }
 
   update(): void {}
@@ -28,52 +25,32 @@ export class EatingBehavior extends StateBehavior {
   }
 
   onStateExited(): void {
-    this.healRunId++
     this.done = false
   }
 
-  private async heal(runId: number): Promise<void> {
+  private async heal(): Promise<void> {
     const d = this.data as PvpData
     if (d.sword.target != null) d.sword.stop()
     if (d.projectile.isActive()) await d.projectile.stop()
-    if (!this.isActiveRun(runId)) return
     this.bot.clearControlStates()
 
-    const result = await this.tryInstantHealth(d, runId)
-    if (!this.isActiveRun(runId)) return
-    console.log(`Tried to apply instant health buff, result: ${result}, ${d.autoBuff.hasItemForBuff('instanthealth') ? 'has item' : 'no item'}, ${d.autoBuff.hasBuff('instanthealth') ? 'already buffed' : 'not buffed'}`)
+    const result = await this.tryInstantHealth(d)
+    // console.log(`Tried to apply instant health buff, result: ${result}, ${d.autoBuff.hasItemForBuff('instanthealth') ? 'has item' : 'no item'}, ${d.autoBuff.hasBuff('instanthealth') ? 'already buffed' : 'not buffed'}`)
     if (
       result !== Results.SUCCESS &&
       result !== Results.ALREADY_BUFFED &&
-      !d.health.isWaitingForInstantHealth() &&
-      this.isActiveRun(runId)
+      !d.health.isWaitingForInstantHealth()
     ) {
       await d.gap.eat(this.bot, d.entity)
     }
-    if (!this.isActiveRun(runId)) return
     this.done = true
   }
 
-  private async tryInstantHealth(d: PvpData, runId: number): Promise<Results> {
+  private async tryInstantHealth(d: PvpData): Promise<Results> {
     if (!d.health.canAttemptInstantHealth()) return Results.FAIL
     if (d.autoBuff.hasBuff('instanthealth')) return Results.ALREADY_BUFFED
     if (!d.autoBuff.hasItemForBuff('instanthealth')) return Results.FAIL
-    const grounded = await this.waitUntilGrounded(EatingBehavior.INSTANT_HEALTH_GROUND_WAIT_TICKS, runId)
-    if (!grounded || !this.isActiveRun(runId)) return Results.FAIL
     d.health.markInstantHealthAttempt()
     return await d.autoBuff.applyEffectsToSelf('instanthealth')
-  }
-
-  private async waitUntilGrounded(maxTicks: number, runId: number): Promise<boolean> {
-    for (let i = 0; i < maxTicks; i++) {
-      if (!this.isActiveRun(runId)) return false
-      if (this.bot.entity.onGround) return true
-      await this.bot.waitForTicks(1)
-    }
-    return this.bot.entity.onGround && this.isActiveRun(runId)
-  }
-
-  private isActiveRun(runId: number): boolean {
-    return this.healRunId === runId
   }
 }

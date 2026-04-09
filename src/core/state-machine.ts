@@ -27,6 +27,7 @@ import '@nxg-org/mineflayer-auto-buff'
 import type { StateBehaviorBuilder } from '@nxg-org/mineflayer-static-statemachine/lib/util.js'
 
 const DRAIN_LIMIT = 16
+const SLOW_STATE_MACHINE_UPDATE_MS = 2
 type TrackedThreatInfo = ReturnType<Bot['projectiles']['getIncomingProjectiles']>[number]
 
 const PHASE_NAME_MAP: Record<string, CombatPhase> = {
@@ -91,7 +92,7 @@ export class StateMachine extends EventEmitter {
     this.bot.projectiles.detectIncomingProjectiles = true
     this.bot.projectiles.detectAimingEntities = true
 
-    this.bot.ender.maxTicks = 150;
+    this.bot.ender.maxTicks = 100;
     this.bot.ender.dvStep = 360;
     this.bot.ender.epsilon = 1e-2;
 
@@ -165,14 +166,25 @@ export class StateMachine extends EventEmitter {
     this.scanProjectiles()
     this.updateSnapshot()
     this.maybeRerouteTarget()
-    this.botStateMachine.update()
+    this.runStateMachineUpdate('tick')
   }
 
   private drainStateMachine(): void {
     for (let i = 0; i < DRAIN_LIMIT; i++) {
       const before = this.phase
-      this.botStateMachine.update()
+      this.runStateMachineUpdate(`drain:${i}`)
       if (this.phase === before) break
+    }
+  }
+
+  private runStateMachineUpdate(source: string): void {
+    const start = performance.now()
+    this.botStateMachine.update()
+    const durationMs = performance.now() - start
+    if (durationMs >= SLOW_STATE_MACHINE_UPDATE_MS) {
+      console.log(
+        `[perf] tick=${this.tick} stateMachine.update source=${source} phase=${this.phase} durationMs=${durationMs.toFixed(3)}`,
+      )
     }
   }
 
@@ -252,7 +264,7 @@ export class StateMachine extends EventEmitter {
     //   else break
     // }
 
-    console.log(entity.position, this.data.entity?.position, this.data.entity?.position.distanceTo(entity.position))
+    // console.log(entity.position, this.data.entity?.position, this.data.entity?.position.distanceTo(entity.position))
 
 
     await new Promise<void>((res) => {
@@ -260,9 +272,7 @@ export class StateMachine extends EventEmitter {
       
           if (e.id !== entity.id) return;
           if (e.type === "player") return;
-            const magnitude = Math.sqrt(Math.pow(entity.velocity.x, 2) + Math.pow(entity.velocity.y, 2) + Math.pow(entity.velocity.z, 2))
-        console.log("entity magnitude", magnitude)
-
+      
           this.data.pearl.onEntitySpawn(this.bot, entity, this.tick, this.data.entity)
           this.bot.off("entityMoved", listener)
           this.bot.off("entityVelocity", listener);
