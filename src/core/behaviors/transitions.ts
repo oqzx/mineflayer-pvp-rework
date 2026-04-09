@@ -23,10 +23,13 @@ function pvp(s: AnyState): PvpData {
 function needsHeal(s: AnyState): boolean {
   const d = pvp(s)
   if (!d.health.isLow) return false
+  if (d.health.isWaitingForInstantHealth()) return false
   const snap = d.snapshot
   const hasGapple = d.gap.shouldEat(s.bot, snap.phase, snap.incomingProjectiles.length > 0)
   const hasHealthPotion =
-    d.autoBuff.hasItemForBuff('instant health') && !d.autoBuff.hasBuff('instant health')
+    d.health.canAttemptInstantHealth() &&
+    d.autoBuff.hasItemForBuff('instanthealth') &&
+    !d.autoBuff.hasBuff('instanthealth')
   return hasGapple || hasHealthPotion
 }
 
@@ -115,6 +118,7 @@ export function buildTransitions() {
   const meleeToPearling = getTransition('meleeToPearling', [...MELEE], PearlingBehavior)
     .setShouldTransition((s) => {
       const d = pvp(s)
+      if (d.health.isWaitingForInstantHealth()) return false
       const reason = d.pearl.getPearlingDecisionReason(s.bot, d.entity, d.health.isLow)
       const allowed = d.pearl.shouldEnterPearling(s.bot, d.entity, d.health.isLow)
 

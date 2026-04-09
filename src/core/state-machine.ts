@@ -25,7 +25,6 @@ import { IdleBehavior } from './behaviors/idle.js'
 import { buildTransitions } from './behaviors/transitions.js'
 import '@nxg-org/mineflayer-auto-buff'
 import type { StateBehaviorBuilder } from '@nxg-org/mineflayer-static-statemachine/lib/util.js'
-import { EnderShotFactory } from '@nxg-org/mineflayer-ender'
 
 const DRAIN_LIMIT = 16
 type TrackedThreatInfo = ReturnType<Bot['projectiles']['getIncomingProjectiles']>[number]
@@ -151,7 +150,7 @@ export class StateMachine extends EventEmitter {
   stop(): void {
     delete this.data.entity
     this.data.sword.stop()
-    this.data.projectile.stop()
+    void this.data.projectile.stop()
     this.drainStateMachine()
   }
 

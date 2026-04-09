@@ -68,6 +68,10 @@ type EscapePearlPlan = {
   block: Block
 }
 
+const MIN_ESCAPE_TRIGGER_DISTANCE = 6
+const MIN_ESCAPE_LANDING_DISTANCE = 8
+const MIN_ESCAPE_DISTANCE_GAIN = 5
+
 export class PearlHandler {
   private throwing = false
   private readonly tracker = ThrownPearlTracker.instance
@@ -234,6 +238,7 @@ export class PearlHandler {
   trackEnemyPearl(bot: Bot, entity: Entity, tick: number, target?: Entity): void {
     if (!this.config.throwHuntdown) return
     if (!entity.name?.includes('pearl')) return
+    console.log(entity.name, entity)
 
     const closestPlayer = Object.values(bot.entities)
       .filter((candidate): candidate is Entity => {
@@ -249,8 +254,8 @@ export class PearlHandler {
       console.log(`Thrower didn't match. ${throwerId} vs ${target?.id}`)
     }
 
-    const mag = Math.sqrt(Math.pow(entity.velocity.x, 2) + Math.pow(entity.velocity.y, 2) + Math.pow(entity.velocity.z, 2))
-    console.log(`Tracking pearl ${entity.id} from thrower ${throwerId} with velocity ${entity.velocity} (mag=${mag.toFixed(2)})`)
+    // const mag = Math.sqrt(Math.pow(entity.velocity.x, 2) + Math.pow(entity.velocity.y, 2) + Math.pow(entity.velocity.z, 2))
+    // console.log(`Tracking pearl ${entity.id} from thrower ${throwerId} with velocity ${entity.velocity} (mag=${mag.toFixed(2)})`)
 
     const calcs = new InterceptFunctions(bot);
     const shot = EnderShotFactory.fromEntity(entity, bot, calcs);
@@ -259,10 +264,10 @@ export class PearlHandler {
     const sim = shot.calcToAABB(AABB.fromBlock(fakePos), fakePos, true);
 
     // console.log(sim, shot.points, shot.pointVelocities)
-    console.log(shot.points.map((p) => p.toString()).join(' -> '), `simulated land=${sim.block?.position.offset(0,1,0) ?? 'unknown'} in ${sim.totalTicks} ticks`)
+    // console.log(shot.points.map((p) => p.toString()).join(' -> '), `simulated land=${sim.block?.position.offset(0,1,0) ?? 'unknown'} in ${sim.totalTicks} ticks`)
     // map all velocity magntidues.
-    const mags = shot.pointVelocities.map((v) => Math.sqrt(Math.pow(v.x, 2) + Math.pow(v.y, 2) + Math.pow(v.z, 2)))
-    console.log('velocity mags', mags.map((m) => m.toFixed(2)).join(', '))
+    // const mags = shot.pointVelocities.map((v) => Math.sqrt(Math.pow(v.x, 2) + Math.pow(v.y, 2) + Math.pow(v.z, 2)))
+    // console.log('velocity mags', mags.map((m) => m.toFixed(2)).join(', '))
 
     const landing = sim.block?.position.offset(0,1,0) ?? fakePos
     this.enemyPearlPredictions.set(entity.id, {
@@ -356,21 +361,25 @@ export class PearlHandler {
   private getEscapePlan(bot: Bot, enemy: Entity): EscapePearlPlan | null {
     if (!this.config.enabled || !this.canThrowPearl(bot)) return null
 
-    const distance = bot.entity.position.distanceTo(enemy.position)
-    if (distance >= 8) return null
+    const botPos = bot.entity.position
+    const enemyPos = enemy.position
+    const currentDistance = botPos.distanceTo(enemyPos)
+    if (currentDistance >= MIN_ESCAPE_TRIGGER_DISTANCE) return null
 
-    const away = bot.entity.position.minus(enemy.position)
+    const away = botPos.minus(enemyPos)
     const horizontalAway = new Vec3(away.x, 0, away.z)
     if (horizontalAway.norm() < 1e-6) return null
 
     const awayDir = horizontalAway.normalize()
     const jitters = [-2, 0, 2]
+    let bestPlan: EscapePearlPlan | null = null
+    let bestScore = -Infinity
 
     for (let dist = 8; dist <= 20; dist += 4) {
       for (let yOff = 0; yOff <= 4; yOff++) {
         for (const xJitter of jitters) {
           for (const zJitter of jitters) {
-            const candidate = bot.entity.position.offset(
+            const candidate = botPos.offset(
               awayDir.x * dist + xJitter,
               yOff,
               awayDir.z * dist + zJitter,
@@ -383,18 +392,25 @@ export class PearlHandler {
 
             const shot = bot.ender.shotToBlock(ground)
             if (!shot?.hit) continue
-            return { block: ground }
+
+            const landing = ground.position.offset(0.5, 1, 0.5)
+            const enemyDistance = landing.distanceTo(enemyPos)
+            const botDistance = landing.distanceTo(botPos)
+            const distanceGain = enemyDistance - currentDistance
+            if (botDistance < MIN_ESCAPE_LANDING_DISTANCE) continue
+            if (distanceGain < MIN_ESCAPE_DISTANCE_GAIN) continue
+
+            const score = enemyDistance * 2 + botDistance + distanceGain * 3 - Math.abs(yOff) * 0.5
+            if (score > bestScore) {
+              bestScore = score
+              bestPlan = { block: ground }
+            }
           }
         }
       }
     }
 
-    const fallback = findSafeLandingBlock(bot, this.config.safeLandingSearchRadius, [enemy.position])
-    if (!fallback) return null
-
-    const fallbackShot = bot.ender.shotToBlock(fallback)
-    if (!fallbackShot?.hit) return null
-    return { block: fallback }
+    return bestPlan
   }
 
   private async executeThrow(bot: Bot, action: () => Promise<boolean | void>): Promise<boolean> {

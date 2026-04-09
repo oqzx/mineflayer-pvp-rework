@@ -1,4 +1,4 @@
-import { type Bot } from "mineflayer";
+import type { Bot } from "mineflayer";
 import { type AABBComponents, type BasicShotInfo, ShotFactory, InterceptFunctions } from "@nxg-org/mineflayer-trajectories";
 import { getTargetYaw } from "../../calc/math";
 import { Vec3 } from "vec3";

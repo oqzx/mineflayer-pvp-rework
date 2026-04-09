@@ -74,7 +74,9 @@ export default function plugin(
   if (!bot.smoothLook) bot.loadPlugin(lookPlugin)
   if (!(bot as Bot & { pathfinder?: unknown }).pathfinder) bot.loadPlugin(pathfinderPlugin)
   if (!(bot as Bot & { ender?: unknown }).ender) bot.loadPlugin(enderPlugin)
-  if (!(bot as Bot & { autoBuff?: unknown }).autoBuff) bot.loadPlugin(autoBuffPlugin)
+  if (!(bot as Bot & { autoBuff?: unknown }).autoBuff) {
+    bot.loadPlugin(autoBuffPlugin)
+  }
 
   const merged: FullConfig = { ...defaultConfig, ...config }
   bot.pvp = new PvpController(bot, merged, agents)
