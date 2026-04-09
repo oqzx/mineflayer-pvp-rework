@@ -70,7 +70,7 @@ export class GapHandler {
     const isSameTargetGoal = this.retreatGoalTargetId === target.id
     if (!this.retreatGoal || !isSameTargetGoal) {
       this.stopRetreatGoal(bot)
-      this.retreatGoal = new goals.GoalInvert(new FollowGoal(bot, target, 4, 5))
+      this.retreatGoal = new goals.GoalInvert(new FollowGoal(bot, target, 25, 5))
       this.retreatGoalTargetId = target.id
     }
 
