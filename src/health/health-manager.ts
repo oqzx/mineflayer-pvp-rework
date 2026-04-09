@@ -5,6 +5,8 @@ import type { LowHealthConfig } from '../config/types.js'
 export class HealthManager extends EventEmitter {
   private lastHealth: number = 20
   private readonly lowThreshold: number
+  private healthUpdateId = 0
+  private lastInstantHealthAttemptUpdateId = -1
 
   constructor(
     private readonly bot: Bot,
@@ -31,7 +33,20 @@ export class HealthManager extends EventEmitter {
     return this.current < this.lastHealth
   }
 
+  canAttemptInstantHealth(): boolean {
+    return this.lastInstantHealthAttemptUpdateId < this.healthUpdateId
+  }
+
+  isWaitingForInstantHealth(): boolean {
+    return this.lastInstantHealthAttemptUpdateId === this.healthUpdateId
+  }
+
+  markInstantHealthAttempt(): void {
+    this.lastInstantHealthAttemptUpdateId = this.healthUpdateId
+  }
+
   private onHealthChange(): void {
+    this.healthUpdateId++
     const hp = this.bot.health ?? 20
     if (hp < this.lastHealth) this.emit('damaged', this.lastHealth - hp)
     if (hp <= this.lowThreshold && this.lastHealth > this.lowThreshold) this.emit('lowHealth', hp)

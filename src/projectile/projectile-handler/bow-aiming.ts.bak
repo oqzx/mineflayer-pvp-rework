@@ -1,9 +1,9 @@
 import type { Bot } from 'mineflayer'
 import type { Entity } from 'prismarine-entity'
 import { Vec3 } from 'vec3'
-import type { BowConfig } from '../config/types.js'
-import { solveAimIterative } from './trajectory.js'
-import type { SolvedAim } from './trajectory.js'
+import type { BowConfig } from '../../config/types.js'
+import { solveAimIterative } from '../trajectory.js'
+import type { SolvedAim } from '../trajectory.js'
 
 export type AimResult = SolvedAim & {
   weaponName: string

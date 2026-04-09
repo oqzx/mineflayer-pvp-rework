@@ -2,16 +2,14 @@ import { EventEmitter } from 'events'
 import { BotStateMachine, getNestedMachine } from '@nxg-org/mineflayer-static-statemachine'
 import type { Bot } from 'mineflayer'
 import type { Entity } from 'prismarine-entity'
+import type { Vec3 } from 'vec3'
 import type { FullConfig } from '../config/types.js'
 import type { CombatPhase, CombatSnapshot } from './combat-state.js'
 import { createSnapshot } from './combat-state.js'
 import { SwordCombat } from '../combat/sword-combat.js'
-import { ProjectileHandler } from '../projectile/projectile-handler.js'
+import { ProjectileHandler } from '../projectile/projectile-handler'
 import { PearlHandler } from '../projectile/pearl-handler.js'
-import {
-  DodgeController,
-  classifyProjectile,
-} from '../movement/dodge-controller.js'
+import { DodgeController, classifyProjectile } from '../movement/dodge-controller.js'
 import { GapHandler } from '../tactics/gap-handler.js'
 import { HealthManager } from '../health/health-manager.js'
 import { PotionHandler } from '../health/potion-handler.js'
@@ -26,6 +24,7 @@ import '@nxg-org/mineflayer-auto-buff'
 import type { StateBehaviorBuilder } from '@nxg-org/mineflayer-static-statemachine/lib/util.js'
 
 const DRAIN_LIMIT = 16
+const SLOW_STATE_MACHINE_UPDATE_MS = 2
 type TrackedThreatInfo = ReturnType<Bot['projectiles']['getIncomingProjectiles']>[number]
 
 const PHASE_NAME_MAP: Record<string, CombatPhase> = {
@@ -90,9 +89,22 @@ export class StateMachine extends EventEmitter {
     this.bot.projectiles.detectIncomingProjectiles = true
     this.bot.projectiles.detectAimingEntities = true
 
-    sword.on('attackedTarget', (t: Entity) => this.emit('attackedTarget', t))
-    sword.on('startedAttacking', (t: Entity) => this.emit('startedAttacking', t))
-    sword.on('stoppedAttacking', () => this.emit('stoppedAttacking'))
+    this.bot.ender.maxTicks = 100
+    this.bot.ender.dvStep = 360
+    this.bot.ender.epsilon = 1e-2
+
+    sword.on('attackedTarget', (t: Entity) => {
+      console.log(`[event] tick=${this.tick} attackedTarget -> ${t.username ?? t.name ?? t.id}`)
+      this.emit('attackedTarget', t)
+    })
+    sword.on('startedAttacking', (t: Entity) => {
+      console.log(`[event] tick=${this.tick} startedAttacking -> ${t.username ?? t.name ?? t.id}`)
+      this.emit('startedAttacking', t)
+    })
+    sword.on('stoppedAttacking', () => {
+      console.log(`[event] tick=${this.tick} stoppedAttacking`)
+      this.emit('stoppedAttacking')
+    })
     health.on('lowHealth', () => this.onLowHealth())
 
     const transitions = buildTransitions()
@@ -112,11 +124,16 @@ export class StateMachine extends EventEmitter {
       if (mapped && mapped !== this.phase) {
         this.phase = mapped
         this.data.snapshot = { ...this.data.snapshot, phase: mapped }
+        console.log(`[event] tick=${this.tick} pvpPhaseChanged -> ${mapped}`)
         this.emit('phaseChanged', mapped)
       }
     })
 
     bot.on('physicsTick', this.onTick)
+    bot.on('move', this.onBotMove)
+    bot.on('forcedMove', this.onForcedMove)
+    bot.on('entitySpawn', this.onEntitySpawn)
+    bot.on('entityDead', this.onEntityGone)
     bot.on('entityGone', this.onEntityGone)
 
     this.botStateMachine.start(false)
@@ -131,7 +148,7 @@ export class StateMachine extends EventEmitter {
   stop(): void {
     delete this.data.entity
     this.data.sword.stop()
-    this.data.projectile.stop()
+    void this.data.projectile.stop()
     this.drainStateMachine()
   }
 
@@ -146,14 +163,25 @@ export class StateMachine extends EventEmitter {
     this.scanProjectiles()
     this.updateSnapshot()
     this.maybeRerouteTarget()
-    this.botStateMachine.update()
+    this.runStateMachineUpdate('tick')
   }
 
   private drainStateMachine(): void {
     for (let i = 0; i < DRAIN_LIMIT; i++) {
       const before = this.phase
-      this.botStateMachine.update()
+      this.runStateMachineUpdate(`drain:${i}`)
       if (this.phase === before) break
+    }
+  }
+
+  private runStateMachineUpdate(source: string): void {
+    const start = performance.now()
+    this.botStateMachine.update()
+    const durationMs = performance.now() - start
+    if (durationMs >= SLOW_STATE_MACHINE_UPDATE_MS) {
+      console.log(
+        `[perf] tick=${this.tick} stateMachine.update source=${source} phase=${this.phase} durationMs=${durationMs.toFixed(3)}`,
+      )
     }
   }
 
@@ -182,7 +210,9 @@ export class StateMachine extends EventEmitter {
 
     this.data.aimingEntities = this.bot.projectiles
       .getAimingEntities()
-      .map((info) => this.mapTrackedThreat(info))
+      .map((info) => {
+        return this.mapTrackedThreat(info)
+      })
       .sort((a, b) => a.estimatedImpactTick - b.estimatedImpactTick)
   }
 
@@ -221,7 +251,46 @@ export class StateMachine extends EventEmitter {
     }
   }
 
+  private onEntitySpawn = async (entity: Entity): Promise<void> => {
+    // lol rough fix for testing
+    // while (true) {
+    //   if (entity.velocity.floored().equals(entity.velocity))
+    //   await new Promise((res) => setTimeout(res, 10))
+    //   else break
+    // }
+
+    await new Promise<void>((res) => {
+      const listener = async (e: Entity) => {
+        if (e.id !== entity.id) return
+        if (e.type === 'player') return
+
+        this.data.pearl.onEntitySpawn(this.bot, entity, this.tick, this.data.entity)
+        this.bot.off('entityMoved', listener)
+        this.bot.off('entityVelocity', listener)
+        res()
+      }
+
+      this.bot.on('entityMoved', listener)
+      this.bot.on('entityVelocity', listener)
+
+      setTimeout(() => {
+        this.bot.off('entityMoved', listener)
+        this.bot.off('entityVelocity', listener)
+        res()
+      }, 500)
+    })
+  }
+
+  private onBotMove = (previousPosition: Vec3): void => {
+    this.data.pearl.onBotMove(this.bot, previousPosition)
+  }
+
+  private onForcedMove = (): void => {
+    this.data.pearl.onForcedMove(this.bot)
+  }
+
   private onEntityGone = (entity: Entity): void => {
+    this.data.pearl.onEntityGone(this.bot, entity)
     if (this.data.entity?.id === entity.id) {
       delete this.data.entity
       this.data.sword.stop()

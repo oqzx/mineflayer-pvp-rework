@@ -119,8 +119,9 @@ export function getNearbyWaterBlock(bot: Bot): Block | undefined {
       if (block === null) return false
 
       const isFullWaterSource = WATER_BLOCKS.has(block.name) && block.metadata === 0
-      const isWaterlogged = (block as Block & { _properties?: { waterlogged?: boolean } })._properties
-        ?.waterlogged === true
+      const isWaterlogged =
+        (block as Block & { _properties?: { waterlogged?: boolean } })._properties?.waterlogged ===
+        true
       const inReach = AABBUtils.getBlockAABB(block).distanceToVec(eyePos) < 5
 
       return (isFullWaterSource || isWaterlogged) && inReach
@@ -172,7 +173,7 @@ function getAdjacentOpenPlacementTarget(
     const adjacentPos = trapBlock.position.plus(offset)
     if (failedPlacements.has(adjacentPos.toString())) continue
     const adjacentBlock = getBlockAt(bot, adjacentPos)
-    if (adjacentBlock?.boundingBox != "empty") continue
+    if (adjacentBlock?.boundingBox != 'empty') continue
     const targetCenter = adjacentPos.offset(0.5, 0.5, 0.5)
     const dir = targetCenter.minus(eyePos)
     const distance = dir.norm()
@@ -213,8 +214,6 @@ export async function pickUpLavaWithWater(bot: Bot, lavaBlock: Block): Promise<b
 
   const equipped = await equipHand(bot, waterBucket)
   if (!equipped) return false
-
-
 
   await useHeldItemAt(bot, lavaBlock.position.offset(0.5, 0.5, 0.5))
   return true
@@ -301,7 +300,7 @@ export function shouldStayInStuck(state: { bot: Bot; data: StateMachineData }): 
 
 export function enterStuckState(data: PvpData): void {
   data.sword.stop()
-  data.projectile.stop()
+  void data.projectile.stop()
   data.stuckWaterFailedPlacements.clear()
   data.sword.bot.clearControlStates()
 }

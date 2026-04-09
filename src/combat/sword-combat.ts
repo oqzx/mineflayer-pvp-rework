@@ -16,16 +16,18 @@ import {
   overshootAngle,
   humanizedCps,
 } from '../util/humanizer.js'
-import { FittsAimTracker } from '../util/fitts-aim.js'
+import { AdvancedAimPoint } from '../util/advanced-aim-point.js'
+import { RotationSmoother } from '../util/rotation-smoother.js'
 import { CpsController } from './cps-controller.js'
 import { AttackDebugger } from './attack-debugger.js'
 import { ComboTracker } from './combo-tracker.js'
 import { StrafeController } from '../movement/strafe-controller.js'
 import { WTapController } from '../movement/w-tap-controller.js'
+import { BlockTrap } from '../movement/block-trap.js'
+import type { WTapContext } from '../movement/w-tap-controller.js'
 import { CriticalHandler } from '../tactics/critical-handler.js'
 import { BlockHitHandler } from '../tactics/block-hit.js'
 import { ShieldManager } from '../tactics/shield-manager.js'
-import { GapHandler } from '../tactics/gap-handler.js'
 import { HeightAdvantage } from '../tactics/height-advantage.js'
 import { SessionMemory } from '../adaptation/session-memory.js'
 import { StyleAdapter } from '../adaptation/style-adapter.js'
@@ -37,8 +39,9 @@ import type { PredictionFrame } from '../engine/prediction-layer.js'
 import { BehaviorBlend } from '../engine/behavior-blend.js'
 import type { BlendWeights } from '../engine/behavior-blend.js'
 import { FatigueManager } from '../engine/fatigue-manager.js'
-import { goals } from 'mineflayer-pathfinder'
 import 'mineflayer-pathfinder'
+import { FollowGoal } from '../util/follow-goal.js'
+import type { goals } from 'mineflayer-pathfinder'
 
 const { getEntityAABB } = AABBUtils
 
@@ -51,51 +54,6 @@ type BotWithPathfinder = Bot & {
     setGoal(goal: goals.Goal | null, dynamic?: boolean): void
     stop(): void
     isMoving(): boolean
-  }
-}
-
-class FollowGoal extends goals.Goal {
-  private readonly rangeSq: number
-  private cachedPos: Vec3
-
-  constructor(
-    private readonly bot: Bot,
-    private readonly entity: Entity,
-    range: number,
-    private readonly predictTicks: number,
-  ) {
-    super()
-    this.rangeSq = range * range
-    this.cachedPos = entity.position.clone()
-  }
-
-  heuristic(n: { x: number; y: number; z: number }): number {
-    const dx = Math.abs(this.cachedPos.x - n.x)
-    const dy = Math.abs(this.cachedPos.y - n.y)
-    const dz = Math.abs(this.cachedPos.z - n.z)
-    return Math.abs(dx - dz) + Math.min(dx, dz) * Math.SQRT2 + dy
-  }
-
-  isEnd(n: { x: number; y: number; z: number }): boolean {
-    const dx = this.cachedPos.x - n.x
-    const dy = this.cachedPos.y - n.y
-    const dz = this.cachedPos.z - n.z
-    return dx * dx + dy * dy + dz * dz <= this.rangeSq
-  }
-
-  hasChanged(): boolean {
-    type Tracker = { getEntitySpeed?: (e: Entity) => Vec3 | null }
-    const vel =
-      (this.bot.tracker as unknown as Tracker).getEntitySpeed?.(this.entity) ?? new Vec3(0, 0, 0)
-    const predicted = this.entity.position.plus(vel.scaled(this.predictTicks))
-    const dx = predicted.x - this.cachedPos.x
-    const dy = predicted.y - this.cachedPos.y
-    const dz = predicted.z - this.cachedPos.z
-    if (dx * dx + dy * dy + dz * dz > 1) {
-      this.cachedPos = predicted
-      return true
-    }
-    return false
   }
 }
 
@@ -117,19 +75,19 @@ export class SwordCombat extends EventEmitter {
   private readonly combo: ComboTracker
   private readonly strafe: StrafeController
   private readonly wtap: WTapController
+  private readonly blockTrap: BlockTrap
   private readonly crits: CriticalHandler
   private readonly blockHit: BlockHitHandler
   private readonly shield: ShieldManager
-  private readonly gapHandler: GapHandler
   private readonly height: HeightAdvantage
-  private isGapping = false
   private readonly memory: SessionMemory
   private readonly adapter: StyleAdapter
   private readonly decisionEngine: IDecisionAgent
   private readonly predictionLayer: PredictionLayer
   private readonly behaviorBlend: BehaviorBlend
   private readonly fatigueManager: FatigueManager
-  private readonly fittsTracker: FittsAimTracker
+  private readonly aimPointProvider: AdvancedAimPoint
+  private readonly rotationSmoother: RotationSmoother
 
   private willBeFirstHit = true
   private followGoal: goals.Goal | undefined = undefined
@@ -152,11 +110,11 @@ export class SwordCombat extends EventEmitter {
     this.attackDebug = new AttackDebugger(DEBUG_ATTACK_SKIPS)
     this.combo = new ComboTracker(config.wTap.everyHits, config.blockHit.everyHits)
     this.strafe = new StrafeController(config.strafe)
-    this.wtap = new WTapController()
+    this.wtap = new WTapController(config.wTap)
+    this.blockTrap = new BlockTrap(config.blockTrap)
     this.crits = new CriticalHandler(config.critical)
     this.blockHit = new BlockHitHandler(config.blockHit, config.lowHealth)
     this.shield = new ShieldManager(config.shield)
-    this.gapHandler = new GapHandler(config.gap)
     this.height = new HeightAdvantage()
     this.memory = new SessionMemory()
     this.adapter = new StyleAdapter(config.adaptation)
@@ -164,7 +122,8 @@ export class SwordCombat extends EventEmitter {
     this.predictionLayer = new PredictionLayer(config.prediction)
     this.behaviorBlend = new BehaviorBlend(config.behaviorBlend)
     this.fatigueManager = new FatigueManager(config.fatigue)
-    this.fittsTracker = new FittsAimTracker()
+    this.aimPointProvider = new AdvancedAimPoint()
+    this.rotationSmoother = new RotationSmoother()
 
     this.bot.on('physicsTick', this.onTick)
     this.bot.on('entitySwingArm', this.onTargetSwing)
@@ -182,11 +141,11 @@ export class SwordCombat extends EventEmitter {
     this.ticksSinceLastTargetHurt = 999
     this.willBeFirstHit = true
     this.kbCounterTicksLeft = 0
-    this.fittsTracker.reset()
+    this.aimPointProvider.reset()
+    this.rotationSmoother.reset()
     this.bot.tracker.trackEntity(target)
     this.bot.tracker.trackEntity(this.bot.entity)
-    const weapon = this.findWeapon()
-    if (weapon) await this.equip(weapon)
+    await this.equipBestWeapon()
     this.fatigueManager.reset()
     this.behaviorBlend.reset()
     this.emit('startedAttacking', target)
@@ -200,13 +159,19 @@ export class SwordCombat extends EventEmitter {
     this.kbCounterTicksLeft = 0
     this.shieldReequipArmed = false
     this.shieldReactivateAtTick = null
-    this.fittsTracker.reset()
+    this.aimPointProvider.reset()
+    this.rotationSmoother.reset()
     this.combo.reset()
     this.cps.resetHitStreak()
     this.strafe.clearDir(this.bot)
     this.stopFollow()
     this.bot.clearControlStates()
     this.emit('stoppedAttacking')
+  }
+
+  async equipBestWeapon(): Promise<void> {
+    const weapon = this.findWeapon()
+    if (weapon) await this.equip(weapon)
   }
 
   botReach(): number {
@@ -236,9 +201,7 @@ export class SwordCombat extends EventEmitter {
     }
   }
 
-  private debugSnapshot(
-    cpsState = this.cps.getDebugState(this.currentTick),
-  ) {
+  private debugSnapshot(cpsState = this.cps.getDebugState(this.currentTick)) {
     return {
       target: this.target,
       phase: this.combo.state,
@@ -265,6 +228,7 @@ export class SwordCombat extends EventEmitter {
 
     this.combo.update(this.ticksSinceLastHurt, this.ticksSinceLastTargetHit)
     this.processShieldReactivate()
+    this.blockTrap.tick()
 
     const profile = this.memory.getOrCreate(this.target.id)
     const strategy = this.adapter.deriveStrategy(profile)
@@ -306,11 +270,10 @@ export class SwordCombat extends EventEmitter {
       true,
       this.config.jumpBoost.useForHeightAdvantage,
     )
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
-    this.checkShieldDisable().catch(() => {})
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
-    this.handleCrits().catch(() => {})
+    void this.checkShieldDisable().catch(() => {})
+    void this.handleCrits().catch(() => {})
     this.handleShieldToggle()
+    this.evaluateBlockTrap()
 
     if (this.kbCounterTicksLeft > 0) {
       this.kbCounterTicksLeft--
@@ -330,13 +293,23 @@ export class SwordCombat extends EventEmitter {
     }
 
     if (this.bot.entity.velocity.y <= -0.25) this.bot.setControlState('sprint', false)
+
+    const isFallingForCrit =
+      !this.bot.entity.onGround &&
+      this.bot.entity.velocity.y < -0.1 &&
+      this.config.critical.enabled
+
     if (
       this.bot.entity.onGround &&
       this.config.wTap.enabled &&
       blendWeights.wTapWeight > 0.35 &&
       this.combo.shouldWTap()
     ) {
-      void this.wtap.wtap(this.bot)
+      const wTapCtx: WTapContext = {
+        ticksSinceLastTargetHurt: this.ticksSinceLastTargetHurt,
+        isFallingForCrit,
+      }
+      void this.wtap.wtap(this.bot, wTapCtx)
     }
 
     const shouldHit = this.shouldHitSelect(predFrame)
@@ -393,6 +366,22 @@ export class SwordCombat extends EventEmitter {
     }
   }
 
+  private evaluateBlockTrap(): void {
+    if (!this.target || this.blockTrap.isActive) return
+    if (
+      this.blockTrap.shouldAttempt(
+        this.bot,
+        this.target,
+        this.ticksSinceLastHurt,
+        this.bot.health ?? 20,
+      )
+    ) {
+      void this.blockTrap.execute(this.bot, this.target, () => this.equipBestWeapon()).catch(
+        () => {},
+      )
+    }
+  }
+
   private async handleCrits(): Promise<void> {
     if (!this.target) return
     const inWater = (this.bot.entity as unknown as { isInWater: boolean }).isInWater
@@ -423,7 +412,8 @@ export class SwordCombat extends EventEmitter {
   }
 
   private processShieldReactivate(): void {
-    if (this.shieldReactivateAtTick === null || this.currentTick < this.shieldReactivateAtTick) return
+    if (this.shieldReactivateAtTick === null || this.currentTick < this.shieldReactivateAtTick)
+      return
 
     this.shieldReactivateAtTick = null
     if (this.shield.isEquipped(this.bot)) {
@@ -447,16 +437,6 @@ export class SwordCombat extends EventEmitter {
 
     const isLow = (this.bot.health ?? 20) <= this.config.lowHealth.threshold
 
-    // Gap logic — run away first, eat, re-equip sword
-    if (
-      !this.isGapping &&
-      this.gapHandler.shouldEat(this.bot, 'engaging', this.ticksSinceTargetAttack < 6)
-    ) {
-      void this.executeGap()
-      return
-    }
-    if (this.isGapping) return
-
     const retreatDriven = blend.retreatWeight > 0.5
     let shouldApproach = !isLow || !this.config.lowHealth.preferBlockOverAttack
     if (retreatDriven) shouldApproach = false
@@ -464,7 +444,10 @@ export class SwordCombat extends EventEmitter {
     const tooClose = this.botReach() > this.config.generic.tooCloseRange
     shouldApproach = shouldApproach && tooClose
 
-    if (shouldTrigger(this.config.humanization.sprintToggleNoiseProbability * 0.5) && shouldApproach) {
+    if (
+      shouldTrigger(this.config.humanization.sprintToggleNoiseProbability * 0.5) &&
+      shouldApproach
+    ) {
       shouldApproach = false
     }
 
@@ -546,7 +529,6 @@ export class SwordCombat extends EventEmitter {
     if (!this.config.rotate.enabled || !this.target) return
     if (!this.config.rotate.lookAtHidden && !this.wasVisible) return
 
-    const rotateCfg = this.config.rotate
     const humanCfg = this.config.humanization
 
     if (this.lookAwayTicksLeft > 0) {
@@ -555,8 +537,8 @@ export class SwordCombat extends EventEmitter {
     }
 
     const lapseCheck = focusLapseCheck(
-      rotateCfg.lookAwayProbability,
-      rotateCfg.lookAwayDurationTicks,
+      this.config.rotate.lookAwayProbability,
+      this.config.rotate.lookAwayDurationTicks,
     )
     if (lapseCheck.lapseOccurs) {
       this.lookAwayTicksLeft = lapseCheck.durationTicks
@@ -565,44 +547,38 @@ export class SwordCombat extends EventEmitter {
 
     const botEye = this.bot.entity.position.offset(0, this.bot.entity.height * 0.9, 0)
 
-    const fittsPoint = this.fittsTracker.computeAimPoint(
+    const aimPoint = this.aimPointProvider.compute(
       botEye,
-      this.bot.entity.yaw,
       this.target,
-      rotateCfg.fittsBias,
+      this.bot.entity.yaw,
+      this.config.rotate.fittsBias,
+      humanCfg.eyeHeightVarianceFactor,
     )
 
-    const useLeadAim = rotateCfg.mode === 'constant' || this.ticksToNextAttack <= 0
     const leadPos = predFrame.predictedPosition
-
-    const aimTarget = useLeadAim
+    const useLead = this.config.rotate.mode === 'constant' || this.ticksToNextAttack <= 0
+    const targetPos = useLead
       ? new Vec3(
-          leadPos.x * 0.65 + fittsPoint.x * 0.35,
-          fittsPoint.y,
-          leadPos.z * 0.65 + fittsPoint.z * 0.35,
+          leadPos.x * 0.7 + aimPoint.x * 0.3,
+          aimPoint.y,
+          leadPos.z * 0.7 + aimPoint.z * 0.3,
         )
-      : fittsPoint
+      : aimPoint
 
-    const aimWithVerticalJitter = aimTarget.offset(
-      0,
-      eyeHeightJitter(0, humanCfg.eyeHeightVarianceFactor),
-      0,
-    )
-
-    const dx = aimWithVerticalJitter.x - botEye.x
-    const dy = aimWithVerticalJitter.y - botEye.y
-    const dz = aimWithVerticalJitter.z - botEye.z
+    const dx = targetPos.x - botEye.x
+    const dy = targetPos.y - botEye.y
+    const dz = targetPos.z - botEye.z
     const groundDist = Math.sqrt(dx * dx + dz * dz)
 
     let targetYaw = Math.atan2(-dx, -dz)
     let targetPitch = groundDist > 0 ? Math.atan2(dy, groundDist) : 0
 
-    if (rotateCfg.overshootEnabled && !this.overshootRecovering && this.ticksToNextAttack === -1) {
+    if (this.config.rotate.overshootEnabled && !this.overshootRecovering && this.ticksToNextAttack === -1) {
       const result = overshootAngle(
         this.bot.entity.yaw,
         targetYaw,
-        rotateCfg.overshootAmplitude,
-        rotateCfg.overshootRecoveryFactor,
+        this.config.rotate.overshootAmplitude,
+        this.config.rotate.overshootRecoveryFactor,
       )
       targetYaw = result.value
       this.overshootRecovering = result.recovering
@@ -610,30 +586,31 @@ export class SwordCombat extends EventEmitter {
       this.overshootRecovering = false
     }
 
-    if (shouldTrigger(rotateCfg.microSaccadeFrequency)) {
-      const saccade = microSaccade(rotateCfg.microSaccadeAmplitude)
+    if (shouldTrigger(this.config.rotate.microSaccadeFrequency)) {
+      const saccade = microSaccade(this.config.rotate.microSaccadeAmplitude)
       targetYaw += saccade.yawDelta
       targetPitch += saccade.pitchDelta
     }
 
     targetPitch = Math.max(-PI_HALF, Math.min(PI_HALF, targetPitch))
 
-    const force = !rotateCfg.smooth
+    const currentRot = { yaw: this.bot.entity.yaw, pitch: this.bot.entity.pitch }
+    const targetRot = { yaw: targetYaw, pitch: targetPitch }
 
-    if (rotateCfg.mode === 'constant' || this.ticksToNextAttack === -1) {
-      void this.bot.look(targetYaw, targetPitch, force)
-    } else if (rotateCfg.mode === 'legit') {
+    const smoothed = this.rotationSmoother.smooth(currentRot, targetRot, this.currentTick)
+
+    const force = !this.config.rotate.smooth
+
+    if (this.config.rotate.mode === 'constant' || this.ticksToNextAttack === -1) {
+      void this.bot.look(smoothed.yaw, smoothed.pitch, force)
+    } else if (this.config.rotate.mode === 'legit') {
       if (predFrame.isComboWindowOpen || predFrame.hitChanceEstimate > 0.6) {
-        void this.bot.look(targetYaw, targetPitch, false)
+        void this.bot.look(smoothed.yaw, smoothed.pitch, false)
       }
     }
   }
 
   private shouldHitSelect(predFrame: PredictionFrame): boolean {
-    if (this.isGapping) {
-      this.attackDebug.skip('gapping', this.debugSnapshot())
-      return false
-    }
     if (!this.target) {
       this.attackDebug.skip('missing_target', this.debugSnapshot())
       return false
@@ -652,19 +629,6 @@ export class SwordCombat extends EventEmitter {
     if (!this.bot.supportFeature('doesntHaveOffHandSlot') && this.ticksToNextAttack > -1) {
       this.attackDebug.skip('offhand_cooldown_gate', this.debugSnapshot())
       return false
-    }
-
-    if (this.config.generic.respectIframes) {
-      const iframeProbability = this.computeIframeProbability(this.ticksSinceLastTargetHurt)
-      const iframeRoll = Math.random()
-      if (iframeRoll >= iframeProbability) {
-        this.attackDebug.skip('iframe_probability_gate', this.debugSnapshot(), {
-          iframeProbability: iframeProbability.toFixed(3),
-          iframeRoll: iframeRoll.toFixed(3),
-          ticksSinceTargetHurt: this.ticksSinceLastTargetHurt,
-        })
-        return false
-      }
     }
 
     const chargeCheck = this.computeChargeProbability(this.ticksToNextAttack)
@@ -692,11 +656,6 @@ export class SwordCombat extends EventEmitter {
       return false
     }
     return true
-  }
-
-  private computeIframeProbability(ticksSinceHurt: number): number {
-    if (ticksSinceHurt <= 0) return 0
-    return 1 / (1 + Math.exp(-0.9 * (ticksSinceHurt - 8)))
   }
 
   private computeChargeProbability(ticksToNext: number): number {
@@ -767,7 +726,6 @@ export class SwordCombat extends EventEmitter {
     this.cps.recordHit()
     this.strafe.recordHit()
 
-    // Block-hit: trigger after attacking, not when taking damage
     if (this.config.blockHit.enabled && this.combo.shouldBlockHit()) {
       void this.blockHit.execute(
         this.bot,
@@ -864,29 +822,6 @@ export class SwordCombat extends EventEmitter {
     return this.bot.util.inv.customEquip(weapon, 'hand')
   }
 
-  private async executeGap(): Promise<void> {
-    if (this.isGapping) return
-    this.isGapping = true
-    this.stopFollow()
-
-    // Sprint away from enemy for ~1 second so they can't just kill you while eating
-    this.bot.setControlState('forward', false)
-    this.bot.setControlState('sprint', false)
-    this.bot.setControlState('back', true)
-    this.bot.setControlState('sprint', true)
-    await this.bot.waitForTicks(16)
-    this.bot.setControlState('back', false)
-    this.bot.setControlState('sprint', false)
-
-    await this.gapHandler.eat(this.bot)
-
-    this.isGapping = false
-
-    // Re-equip sword immediately after eating
-    const sword = this.findWeapon('sword') ?? this.findWeapon('axe')
-    if (sword) await this.equip(sword)
-  }
-
   private startFollow(): void {
     if (!this.target) return
     const pf = (this.bot as BotWithPathfinder).pathfinder
@@ -896,11 +831,15 @@ export class SwordCombat extends EventEmitter {
     if (!this.followGoal || !isSameTargetGoal) {
       this.stopFollow()
       const predictTicks = this.config.follow.predictive ? this.config.follow.predictTicks : 0
-      this.followGoal = new FollowGoal(this.bot, this.target, this.config.follow.distance, predictTicks)
+      this.followGoal = new FollowGoal(
+        this.bot,
+        this.target,
+        this.config.follow.distance,
+        predictTicks,
+      )
       this.followGoalTargetId = this.target.id
     }
 
-    // Re-issue the goal if pathfinder was stopped or replaced while our cached goal still exists.
     if (pf.goal !== this.followGoal) {
       pf.setGoal(this.followGoal, true)
     }

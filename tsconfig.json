@@ -16,6 +16,11 @@
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "mineflayer": ["../mineflayer"],
+      "mineflayer/*": ["../mineflayer/*"]
+    },
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true

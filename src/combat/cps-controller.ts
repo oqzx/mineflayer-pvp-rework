@@ -71,9 +71,8 @@ export class CpsController {
     }
 
     const inCombo = phase === 'combo' || phase === 'engaging'
-    const range = inCombo && this.consecutiveHits >= 2
-      ? this.config.comboRange
-      : this.config.engagingRange
+    const range =
+      inCombo && this.consecutiveHits >= 2 ? this.config.comboRange : this.config.engagingRange
 
     const cps = Math.min(this.config.max, randomInRange(range)) * fatigueMultiplier
     this.rolledCps = cps

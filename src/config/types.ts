@@ -19,6 +19,9 @@ export type CpsConfig = {
 export type WTapConfig = {
   enabled: boolean
   everyHits: Range
+  iframeTicks: number
+  releaseMsRange: Range
+  reSprintMsRange: Range
 }
 
 export type BlockHitConfig = {
@@ -31,7 +34,6 @@ export type BlockHitConfig = {
 export type StrafeConfig = {
   enabled: boolean
   mode: 'circle' | 'random' | 'intelligent' | 'predictive'
-  maxAngleOffset: number
   durationJitter: Range
   pauseProbability: number
   pauseDurationTicks: Range
@@ -82,6 +84,7 @@ export type FollowConfig = {
 export type BowConfig = {
   enabled: boolean
   preferOverFireball: boolean
+  aimBackend: 'shot-planner' | 'bow-aiming'
   leadIterations: number
   bridgeKnockbackEnabled: boolean
 }
@@ -95,6 +98,7 @@ export type FireballConfig = {
 export type PearlConfig = {
   enabled: boolean
   aggressiveRange: number
+  throwHuntdown: boolean
   defensiveEnabled: boolean
   voidFallThreshold: number
   safeLandingSearchRadius: number
@@ -102,8 +106,9 @@ export type PearlConfig = {
 
 export type DodgeConfig = {
   enabled: boolean
-  reactionDelay: Range
-  dodgeDistance: number
+  reactionDelayMs: Range
+  jumpEnabled: boolean
+  deflectIntervalMs: Range
 }
 
 export type GapConfig = {
@@ -195,6 +200,27 @@ export type PredictionConfig = {
   movementEntropyWindow: number
 }
 
+export type BlockTrapConfig = {
+  enabled: boolean
+  triggerRange: number
+  cooldownTicks: number
+  twoBlockEnabled: boolean
+  twoBlockVelocityThreshold: number
+  pillarEnabled: boolean
+  pillarMovingProbability: number
+  pillarStationaryProbability: number
+  placementJitterTicks: Range
+  baseScore: number
+  minTriggerScore: number
+  comboEscapeTickWindow: number
+  comboEscapeScoreBonus: number
+  velocityNormFactor: number
+  velocityScoreWeight: number
+  healthPressureThreshold: number
+  healthPressureWeight: number
+  proximityScoreWeight: number
+}
+
 export type FullConfig = {
   generic: GenericConfig
   cps: CpsConfig
@@ -219,5 +245,6 @@ export type FullConfig = {
   decisionEngine: DecisionEngineConfig
   behaviorBlend: BehaviorBlendConfig
   prediction: PredictionConfig
+  blockTrap: BlockTrapConfig
   teammates: string[]
 }

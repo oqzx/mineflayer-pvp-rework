@@ -18,18 +18,21 @@ export class BowCombatBehavior extends StateBehavior {
 
   onStateEntered(): void {
     const d = this.data as PvpData
+    console.log('in combat', canEnterBowCombat(d))
     if (!canEnterBowCombat(d)) return
     const target = d.entity
     if (!target) return
+    void d.projectile.equipBestWeapon()
     void d.projectile.engage(target)
   }
 
   update(): void {
     const d = this.data as PvpData
+    console.log('in combat', canEnterBowCombat(d))
     if (!canEnterBowCombat(d)) return
     const target = d.entity
     if (!target) return
-    if (!d.projectile.isActive) {
+    if (!d.projectile.isActive()) {
       void d.projectile.engage(target)
     }
   }
@@ -40,6 +43,6 @@ export class BowCombatBehavior extends StateBehavior {
 
   onStateExited(): void {
     const d = this.data as PvpData
-    d.projectile.stop()
+    void d.projectile.stop()
   }
 }
