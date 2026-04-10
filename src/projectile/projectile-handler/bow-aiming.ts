@@ -38,14 +38,19 @@ type MarkovState = 'left' | 'right' | 'none'
 type MarkovTransitions = Record<MarkovState, Record<MarkovState, number>>
 type Scenario = { weight: number; vel: Vec3; acc: Vec3 }
 
-function log(...args: any[]): void {
+let debugLoggingEnabled = false
+
+export function enableDebugLogging(enabled: boolean): void {
+  debugLoggingEnabled = enabled
+}
+
+function log(...args: unknown[]): void {
+  if (!debugLoggingEnabled) return
   console.log('[BowAiming]', ...args)
 }
 
 function identityP(n: number): number[][] {
-  return Array.from({ length: n }, (_, i) =>
-    Array.from({ length: n }, (_, j) => (i === j ? 1 : 0))
-  )
+  return Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => (i === j ? 1 : 0)))
 }
 
 function matMul(A: number[][], B: number[][]): number[][] {
@@ -155,7 +160,7 @@ class KalmanFilter9D {
 
     const S = matAdd(
       matMul(matMul(H, PP), matTranspose(H)),
-      scalarMulMat(KALMAN_MEASURE_NOISE, identityP(3))
+      scalarMulMat(KALMAN_MEASURE_NOISE, identityP(3)),
     )
     const K = matMul(matMul(PP, matTranspose(H)), mat3x3Inv(S))
 
@@ -191,7 +196,7 @@ class KalmanFilter9D {
     return new Vec3(
       this.px + this.vx * t + 0.5 * this.ax * t * t,
       this.py + this.vy * t + 0.5 * this.ay * t * t,
-      this.pz + this.vz * t + 0.5 * this.az * t * t
+      this.pz + this.vz * t + 0.5 * this.az * t * t,
     )
   }
 }
@@ -304,8 +309,7 @@ class MovementPredictor {
     const kAcc = this.kalman.getAcceleration()
     const t = this.markov[this.markovState]
     const hSpd = Math.sqrt(kVel.x * kVel.x + kVel.z * kVel.z)
-    const strafeVec =
-      hSpd > 0.01 ? new Vec3(-kVel.z / hSpd, 0, kVel.x / hSpd) : new Vec3(1, 0, 0)
+    const strafeVec = hSpd > 0.01 ? new Vec3(-kVel.z / hSpd, 0, kVel.x / hSpd) : new Vec3(1, 0, 0)
     const sSpd = 0.22
     let scenarios: Scenario[]
 
@@ -406,9 +410,9 @@ class MovementPredictor {
 
 function getEntityVelocity(bot: Bot, entity: Entity): Vec3 {
   return (
-    (bot as unknown as { tracker?: { getEntitySpeed(e: Entity): Vec3 | null } }).tracker?.getEntitySpeed(
-      entity
-    ) ?? new Vec3(0, 0, 0)
+    (
+      bot as unknown as { tracker?: { getEntitySpeed(e: Entity): Vec3 | null } }
+    ).tracker?.getEntitySpeed(entity) ?? new Vec3(0, 0, 0)
   )
 }
 
@@ -419,7 +423,7 @@ function simulateExact(
   yaw: number,
   pitch: number,
   weaponName: string,
-  maxTicks: number = MAX_FLIGHT_TICKS
+  maxTicks: number = MAX_FLIGHT_TICKS,
 ): RawTrajectoryPoint[] {
   const info = trajectoryInfo[weaponName] ?? trajectoryInfo['bow']!
   const PI = Math.PI
@@ -429,7 +433,7 @@ function simulateExact(
   const vel = new Vec3(
     info.v0 * Math.cos(theta) * cosPitch,
     info.v0 * Math.sin(pitch),
-    info.v0 * Math.sin(theta) * cosPitch
+    info.v0 * Math.sin(theta) * cosPitch,
   )
   const pos = origin.clone()
   const pts: RawTrajectoryPoint[] = []
@@ -455,7 +459,7 @@ function computeWeightedMiss(
   scenarios: Scenario[],
   basePos: Vec3,
   entityHeight: number,
-  weaponName: string
+  weaponName: string,
 ): number {
   const pts = simulateExact(origin, yaw, pitch, weaponName)
   let totalMiss = 0
@@ -467,7 +471,7 @@ function computeWeightedMiss(
         .offset(
           sc.vel.x * pt.tick + 0.5 * sc.acc.x * pt.tick * pt.tick,
           sc.vel.y * pt.tick + 0.5 * sc.acc.y * pt.tick * pt.tick,
-          sc.vel.z * pt.tick + 0.5 * sc.acc.z * pt.tick * pt.tick
+          sc.vel.z * pt.tick + 0.5 * sc.acc.z * pt.tick * pt.tick,
         )
       const dist = pt.pos.distanceTo(targetPos)
       if (dist < bestDist) bestDist = dist
@@ -482,7 +486,7 @@ function brentMin(
   lo: number,
   hi: number,
   iters: number,
-  tol: number
+  tol: number,
 ): { x: number; fx: number } {
   const GOLD = 0.3819660112501051
   let a = lo
@@ -559,7 +563,7 @@ function optimizeAngles(
   scenarios: Scenario[],
   basePos: Vec3,
   entityHeight: number,
-  weaponName: string
+  weaponName: string,
 ): { yaw: number; pitch: number } | null {
   const primary = scenarios[0]!
   const guessTarget = basePos
@@ -568,17 +572,16 @@ function optimizeAngles(
 
   const dx = guessTarget.x - origin.x
   const dz = guessTarget.z - origin.z
-  const directYaw = Math.atan2(dx, dz)   // atan2(dx, dz) gives angle from positive Z axis towards positive X (standard math)
+  const directYaw = Math.atan2(dx, dz) // atan2(dx, dz) gives angle from positive Z axis towards positive X (standard math)
 
   log('optimizeAngles: origin', origin, 'guessTarget', guessTarget)
-  log('  directYaw (rad)', directYaw, 'deg', directYaw * 180 / Math.PI)
+  log('  directYaw (rad)', directYaw, 'deg', (directYaw * 180) / Math.PI)
 
   let bestYaw = directYaw
   let bestPitch = 0
   let bestCost = Infinity
 
   const yawSweep = 0.5
-  const pitchSweep = 0.4
   for (let yi = 0; yi <= COARSE_YAW_STEPS; yi++) {
     const testYaw = directYaw - yawSweep + yi * ((yawSweep * 2) / COARSE_YAW_STEPS)
     for (let pi = 0; pi <= COARSE_PITCH_STEPS; pi++) {
@@ -590,7 +593,7 @@ function optimizeAngles(
         scenarios,
         basePos,
         entityHeight,
-        weaponName
+        weaponName,
       )
       if (cost < bestCost) {
         bestCost = cost
@@ -610,7 +613,7 @@ function optimizeAngles(
       bestYaw - 0.3,
       bestYaw + 0.3,
       BRENT_ITERS,
-      1e-4
+      1e-4,
     )
     bestYaw = yawOpt.x
     const pitchOpt = brentMin(
@@ -618,7 +621,7 @@ function optimizeAngles(
       Math.max(PITCH_LOWER, bestPitch - 0.25),
       Math.min(PITCH_UPPER, bestPitch + 0.25),
       BRENT_ITERS,
-      1e-4
+      1e-4,
     )
     bestPitch = pitchOpt.x
     log(`  refine iter ${iter}: yaw`, bestYaw, 'pitch', bestPitch, 'cost', pitchOpt.fx)
@@ -639,13 +642,16 @@ function solveOptimalAim(
   scenarios: Scenario[],
   basePos: Vec3,
   entityHeight: number,
-  weaponName: string
+  weaponName: string,
 ): SolvedAim | null {
   log('=== solveOptimalAim ===')
   log('origin:', origin)
   log('basePos:', basePos)
   log('entityHeight:', entityHeight)
-  log('scenarios:', scenarios.map(s => ({ w: s.weight, v: s.vel, a: s.acc })))
+  log(
+    'scenarios:',
+    scenarios.map((s) => ({ w: s.weight, v: s.vel, a: s.acc })),
+  )
 
   let refinedScenarios = scenarios
   let bestSolution: SolvedAim | null = null
@@ -671,7 +677,7 @@ function solveOptimalAim(
         .offset(
           primary.vel.x * pt.tick + 0.5 * primary.acc.x * pt.tick * pt.tick,
           primary.vel.y * pt.tick + 0.5 * primary.acc.y * pt.tick * pt.tick,
-          primary.vel.z * pt.tick + 0.5 * primary.acc.z * pt.tick * pt.tick
+          primary.vel.z * pt.tick + 0.5 * primary.acc.z * pt.tick * pt.tick,
         )
       const dist = pt.pos.distanceTo(targetPos)
       if (dist < bestDist) {
@@ -701,18 +707,22 @@ function solveOptimalAim(
     if (prevTargetPos) {
       const dampedTarget = bestTargetPos!.scaled(1 - DAMPING).add(prevTargetPos.scaled(DAMPING))
       log('  damped target update:', dampedTarget)
-      refinedScenarios = [{
-        ...primary,
-        vel: dampedTarget.sub(basePos).scaled(1 / bestTick),
-        acc: primary.acc,
-      }]
+      refinedScenarios = [
+        {
+          ...primary,
+          vel: dampedTarget.minus(basePos).scaled(1 / bestTick),
+          acc: primary.acc,
+        },
+      ]
       basePos = dampedTarget.clone()
     } else {
-      refinedScenarios = [{
-        ...primary,
-        vel: bestTargetPos!.sub(basePos).scaled(1 / bestTick),
-        acc: primary.acc,
-      }]
+      refinedScenarios = [
+        {
+          ...primary,
+          vel: bestTargetPos!.minus(basePos).scaled(1 / bestTick),
+          acc: primary.acc,
+        },
+      ]
     }
     prevTargetPos = bestTargetPos
   }
@@ -749,7 +759,10 @@ function detectBridgeInfo(bot: Bot, target: Entity): { edgeDir: Vec3; bridgeAxis
     return d
   }
 
-  const bestDir = openDirs.reduce((best, dir) => (dropDepth(dir) >= dropDepth(best) ? dir : best), openDirs[0]!)
+  const bestDir = openDirs.reduce(
+    (best, dir) => (dropDepth(dir) >= dropDepth(best) ? dir : best),
+    openDirs[0]!,
+  )
   const perp = cardinals.filter((d) => Math.abs(d.x * bestDir.x + d.z * bestDir.z) < 0.1)
   const bridgeAxis = perp.length > 0 ? perp[0]! : new Vec3(-bestDir.z, 0, bestDir.x)
   return { edgeDir: bestDir, bridgeAxis }
@@ -761,7 +774,7 @@ function computeKnockbackAim(
   entityHeight: number,
   entityVel: Vec3,
   edgeDir: Vec3,
-  weaponName: string
+  weaponName: string,
 ): SolvedAim | null {
   const desiredKb = edgeDir.clone().normalize()
   const offsetTarget = targetPos.plus(edgeDir.scaled(0.7))
@@ -803,10 +816,16 @@ function computeKnockbackAim(
       if (!pt || bestDist > 1.5) continue
       const vMag = Math.sqrt(pt.vel.x * pt.vel.x + pt.vel.y * pt.vel.y + pt.vel.z * pt.vel.z)
       if (vMag < 1e-6) continue
-      const score = (pt.vel.x / vMag) * desiredKb.x + (pt.vel.z / vMag) * desiredKb.z - bestDist * 0.5
+      const score =
+        (pt.vel.x / vMag) * desiredKb.x + (pt.vel.z / vMag) * desiredKb.z - bestDist * 0.5
       if (score > bestScore) {
         bestScore = score
-        bestAim = { yaw: testYaw, pitch: testPitch, flightTicks: bestTick, impactPosition: pt.pos.clone() }
+        bestAim = {
+          yaw: testYaw,
+          pitch: testPitch,
+          flightTicks: bestTick,
+          impactPosition: pt.pos.clone(),
+        }
       }
     }
   }
@@ -845,7 +864,7 @@ export class BowAiming {
           target.height,
           trackerVel,
           bridgeInfo.edgeDir,
-          weaponName
+          weaponName,
         )
         if (kbAim) return { ...kbAim, weaponName, knockbackDir: bridgeInfo.edgeDir }
       }
@@ -874,7 +893,7 @@ export function computeKnockbackAimPublic(
   bot: Bot,
   target: Entity,
   edgeDir: Vec3,
-  weaponName: string
+  weaponName: string,
 ): SolvedAim | null {
   const eyePos = bot.entity.position.offset(0, 1.62, 0)
   const vel = getEntityVelocity(bot, target)
