@@ -24,7 +24,6 @@ const MAX_FLIGHT_TICKS = 200
 const COARSE_YAW_STEPS = 24
 const COARSE_PITCH_STEPS = 24
 const BRENT_ITERS = 50
-const LEAD_ITERS = 20
 const HIT_EPSILON = 0.1
 const MARKOV_ALPHA = 0.18
 const KALMAN_PROCESS_NOISE = 0.004
@@ -32,7 +31,7 @@ const KALMAN_MEASURE_NOISE = 0.012
 const PITCH_LOWER = -Math.PI * 0.44
 const PITCH_UPPER = Math.PI * 0.22
 
-type PositionSample = { pos: Vec3; vel: Vec3; tick: number }
+type PositionSample = { pos: Vec3; tick: number }
 type MovementRegime = 'straight' | 'strafing' | 'jumping' | 'sprint_jumping' | 'dodging' | 'idle'
 type MarkovState = 'left' | 'right' | 'none'
 type MarkovTransitions = Record<MarkovState, Record<MarkovState, number>>
@@ -220,6 +219,8 @@ function normalizeRow(row: Record<MarkovState, number>): void {
 class MovementPredictor {
   private readonly history: PositionSample[] = []
   private readonly kalman = new KalmanFilter9D()
+  private smoothedVelocity = new Vec3(0, 0, 0)
+  private smoothedAcceleration = new Vec3(0, 0, 0)
   private initialized = false
   private regime: MovementRegime = 'idle'
   private markovState: MarkovState = 'none'
@@ -230,7 +231,7 @@ class MovementPredictor {
   private jumpStartY = 0
   private sprintJumpPeriod = 0
 
-  record(pos: Vec3, vel: Vec3, tick: number): void {
+  record(pos: Vec3, tick: number): void {
     if (!this.initialized) {
       this.kalman.init(pos)
       this.initialized = true
@@ -239,9 +240,15 @@ class MovementPredictor {
     }
 
     const prev = this.history[this.history.length - 1]
+    const derivedVel = this.estimateVelocity(pos, tick)
+    const kalmanVel = this.kalman.getVelocity()
+    const fusedVel = derivedVel.scaled(0.75).add(kalmanVel.scaled(0.25))
+    this.smoothedAcceleration = fusedVel.minus(this.smoothedVelocity)
+    this.smoothedVelocity = fusedVel
+
     if (prev) {
       const prevState = this.markovState
-      const side = this.classifySide(vel, prev.vel, pos, prev.pos)
+      const side = this.classifySide(fusedVel, pos, prev.pos)
 
       if (side !== prevState) {
         this.directionChangeTicks.push(tick)
@@ -259,7 +266,7 @@ class MovementPredictor {
       this.markovState = side
 
       const wasGrounded = this.isGrounded
-      this.isGrounded = vel.y <= 0.01 && Math.abs(vel.y) < 0.42
+      this.isGrounded = fusedVel.y <= 0.01 && Math.abs(fusedVel.y) < 0.42
       if (!wasGrounded && this.isGrounded) {
         const elapsed = tick - this.ticksSinceJump
         if (elapsed > 0) {
@@ -271,15 +278,36 @@ class MovementPredictor {
         this.ticksSinceJump = tick
       }
 
-      const lateralVel = Math.sqrt(vel.x * vel.x + vel.z * vel.z)
-      this.regime = this.classifyRegime(vel, lateralVel)
+      const lateralVel = Math.sqrt(fusedVel.x * fusedVel.x + fusedVel.z * fusedVel.z)
+      this.regime = this.classifyRegime(fusedVel, lateralVel)
     }
 
-    this.history.push({ pos: pos.clone(), vel: vel.clone(), tick })
+    this.history.push({ pos: pos.clone(), tick })
     if (this.history.length > HISTORY_SIZE) this.history.shift()
   }
 
-  private classifySide(vel: Vec3, prevVel: Vec3, pos: Vec3, prevPos: Vec3): MarkovState {
+  private estimateVelocity(pos: Vec3, tick: number): Vec3 {
+    const window = [...this.history, { pos, tick }].slice(-6)
+    if (window.length < 2) return this.smoothedVelocity.clone()
+
+    const latest = window[window.length - 1]!
+    const estimateAxis = (axis: 'x' | 'y' | 'z'): number => {
+      let num = 0
+      let den = 0
+      for (const sample of window) {
+        const dt = sample.tick - latest.tick
+        const w = 1 / (1 + Math.abs(dt))
+        num += dt * (sample.pos[axis] - latest.pos[axis]) * w
+        den += dt * dt * w
+      }
+      if (den < 1e-6) return 0
+      return num / den
+    }
+
+    return new Vec3(estimateAxis('x'), estimateAxis('y'), estimateAxis('z'))
+  }
+
+  private classifySide(vel: Vec3, pos: Vec3, prevPos: Vec3): MarkovState {
     const mag = Math.sqrt(vel.x * vel.x + vel.z * vel.z)
     if (mag < 0.02) return 'none'
     const rightX = vel.z / mag
@@ -305,8 +333,8 @@ class MovementPredictor {
   }
 
   buildScenarios(flightTicks: number): Scenario[] {
-    const kVel = this.kalman.getVelocity()
-    const kAcc = this.kalman.getAcceleration()
+    const kVel = this.smoothedVelocity.clone()
+    const kAcc = this.smoothedAcceleration.clone()
     const t = this.markov[this.markovState]
     const hSpd = Math.sqrt(kVel.x * kVel.x + kVel.z * kVel.z)
     const strafeVec = hSpd > 0.01 ? new Vec3(-kVel.z / hSpd, 0, kVel.x / hSpd) : new Vec3(1, 0, 0)
@@ -394,11 +422,13 @@ class MovementPredictor {
   }
 
   getKalmanVelocity(): Vec3 {
-    return this.kalman.getVelocity()
+    return this.smoothedVelocity.clone()
   }
 
   reset(): void {
     this.history.length = 0
+    this.smoothedVelocity = new Vec3(0, 0, 0)
+    this.smoothedAcceleration = new Vec3(0, 0, 0)
     this.initialized = false
     this.regime = 'idle'
     this.markovState = 'none'
@@ -658,20 +688,16 @@ function solveOptimalAim(
   let prevTargetPos: Vec3 | null = null
   const DAMPING = 0.6
 
-  for (let iter = 0; iter < LEAD_ITERS; iter++) {
-    log(`Lead iteration ${iter}`)
-    const angles = optimizeAngles(origin, refinedScenarios, basePos, entityHeight, weaponName)
-    if (!angles) break
+  const angles = optimizeAngles(origin, scenarios, basePos, entityHeight, weaponName)
+  if (!angles) return null
 
-    const pts = simulateExact(origin, angles.yaw, angles.pitch, weaponName)
-    const primary = refinedScenarios[0]!
+  const pts = simulateExact(origin, angles.yaw, angles.pitch, weaponName)
+  let bestDist = Infinity
+  let bestTick = 0
+  let bestPt: RawTrajectoryPoint | null = null
 
-    let bestDist = Infinity
-    let bestTick = 0
-    let bestPt: RawTrajectoryPoint | null = null
-    let bestTargetPos: Vec3 | null = null
-
-    for (const pt of pts) {
+  for (const pt of pts) {
+    const dist = scenarios.reduce((sum, sc) => {
       const targetPos = basePos
         .offset(0, entityHeight * 0.5, 0)
         .offset(
@@ -679,24 +705,13 @@ function solveOptimalAim(
           primary.vel.y * pt.tick + 0.5 * primary.acc.y * pt.tick * pt.tick,
           primary.vel.z * pt.tick + 0.5 * primary.acc.z * pt.tick * pt.tick,
         )
-      const dist = pt.pos.distanceTo(targetPos)
-      if (dist < bestDist) {
-        bestDist = dist
-        bestTick = pt.tick
-        bestPt = pt
-        bestTargetPos = targetPos
-      }
-    }
+      return sum + sc.weight * pt.pos.distanceTo(targetPos)
+    }, 0)
 
-    log(`  bestTick: ${bestTick}, dist: ${bestDist}`)
-    log(`  projectile at tick ${bestTick}:`, bestPt?.pos)
-    log(`  predicted target at tick ${bestTick}:`, bestTargetPos)
-
-    bestSolution = {
-      yaw: angles.yaw,
-      pitch: angles.pitch,
-      flightTicks: bestTick,
-      impactPosition: bestPt?.pos.clone() ?? basePos.offset(0, entityHeight * 0.5, 0),
+    if (dist < bestDist) {
+      bestDist = dist
+      bestTick = pt.tick
+      bestPt = pt
     }
 
     if (bestDist < HIT_EPSILON) {
@@ -727,8 +742,13 @@ function solveOptimalAim(
     prevTargetPos = bestTargetPos
   }
 
-  log('final solution:', bestSolution)
-  return bestSolution
+  if (!bestPt || bestDist > 2.5) return null
+  return {
+    yaw: angles.yaw,
+    pitch: angles.pitch,
+    flightTicks: bestTick,
+    impactPosition: bestPt.pos.clone(),
+  }
 }
 
 function detectBridgeInfo(bot: Bot, target: Entity): { edgeDir: Vec3; bridgeAxis: Vec3 } | null {
@@ -847,12 +867,18 @@ export class BowAiming {
       this.lastTargetId = target.id
     }
 
-    const trackerVel = getEntityVelocity(bot, target)
-    this.predictor.record(target.position.clone(), trackerVel, this.tick)
+    this.predictor.record(target.position.clone(), this.tick)
 
     // Use correct eye height for 1.8.8 (player eye is at feet + 1.62)
     const eyePos = bot.entity.position.offset(0, 1.62, 0)
-    log(`Tick ${this.tick}: eyePos`, eyePos, 'targetPos', target.position, 'vel', trackerVel)
+    log(
+      `Tick ${this.tick}: eyePos`,
+      eyePos,
+      'targetPos',
+      target.position,
+      'vel',
+      this.predictor.getKalmanVelocity(),
+    )
 
     if (this.config.bridgeKnockbackEnabled) {
       const bridgeInfo = detectBridgeInfo(bot, target)
@@ -862,7 +888,7 @@ export class BowAiming {
           eyePos,
           target.position,
           target.height,
-          trackerVel,
+          this.predictor.getKalmanVelocity(),
           bridgeInfo.edgeDir,
           weaponName,
         )
@@ -896,6 +922,6 @@ export function computeKnockbackAimPublic(
   weaponName: string,
 ): SolvedAim | null {
   const eyePos = bot.entity.position.offset(0, 1.62, 0)
-  const vel = getEntityVelocity(bot, target)
+  const vel = new Vec3(0, 0, 0)
   return computeKnockbackAim(eyePos, target.position, target.height, vel, edgeDir, weaponName)
 }
