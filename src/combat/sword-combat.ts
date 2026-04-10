@@ -11,7 +11,6 @@ import {
   humanDelay,
   shouldTrigger,
   microSaccade,
-  eyeHeightJitter,
   focusLapseCheck,
   overshootAngle,
   humanizedCps,
@@ -295,9 +294,7 @@ export class SwordCombat extends EventEmitter {
     if (this.bot.entity.velocity.y <= -0.25) this.bot.setControlState('sprint', false)
 
     const isFallingForCrit =
-      !this.bot.entity.onGround &&
-      this.bot.entity.velocity.y < -0.1 &&
-      this.config.critical.enabled
+      !this.bot.entity.onGround && this.bot.entity.velocity.y < -0.1 && this.config.critical.enabled
 
     if (
       this.bot.entity.onGround &&
@@ -376,9 +373,9 @@ export class SwordCombat extends EventEmitter {
         this.bot.health ?? 20,
       )
     ) {
-      void this.blockTrap.execute(this.bot, this.target, () => this.equipBestWeapon()).catch(
-        () => {},
-      )
+      void this.blockTrap
+        .execute(this.bot, this.target, () => this.equipBestWeapon())
+        .catch(() => {})
     }
   }
 
@@ -558,11 +555,7 @@ export class SwordCombat extends EventEmitter {
     const leadPos = predFrame.predictedPosition
     const useLead = this.config.rotate.mode === 'constant' || this.ticksToNextAttack <= 0
     const targetPos = useLead
-      ? new Vec3(
-          leadPos.x * 0.7 + aimPoint.x * 0.3,
-          aimPoint.y,
-          leadPos.z * 0.7 + aimPoint.z * 0.3,
-        )
+      ? new Vec3(leadPos.x * 0.7 + aimPoint.x * 0.3, aimPoint.y, leadPos.z * 0.7 + aimPoint.z * 0.3)
       : aimPoint
 
     const dx = targetPos.x - botEye.x
@@ -573,7 +566,11 @@ export class SwordCombat extends EventEmitter {
     let targetYaw = Math.atan2(-dx, -dz)
     let targetPitch = groundDist > 0 ? Math.atan2(dy, groundDist) : 0
 
-    if (this.config.rotate.overshootEnabled && !this.overshootRecovering && this.ticksToNextAttack === -1) {
+    if (
+      this.config.rotate.overshootEnabled &&
+      !this.overshootRecovering &&
+      this.ticksToNextAttack === -1
+    ) {
       const result = overshootAngle(
         this.bot.entity.yaw,
         targetYaw,

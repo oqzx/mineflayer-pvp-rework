@@ -16,7 +16,6 @@ const ARROW_GRAVITY = 0.05
 const ARROW_DRAG = 0.99
 const MAX_SIMULATE_TICKS = 80
 const DANGER_ZONE_PADDING = 0.3 * 5
-const SAFE_CLEARANCE = 1.5 * 0.3 + 1.5 * 0.5
 
 export function classifyProjectile(entity: Entity): IncomingProjectile['type'] | null {
   const name = entity.name?.toLowerCase() ?? ''
@@ -40,7 +39,14 @@ function stepArrow(frame: ArrowFrame): ArrowFrame {
   return { pos: frame.pos.plus(vel), vel }
 }
 
-function botAABB(pos: Vec3): { minX: number; maxX: number; minY: number; maxY: number; minZ: number; maxZ: number } {
+function botAABB(pos: Vec3): {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+  minZ: number
+  maxZ: number
+} {
   return {
     minX: pos.x - PLAYER_HALF_WIDTH,
     maxX: pos.x + PLAYER_HALF_WIDTH,
@@ -51,11 +57,7 @@ function botAABB(pos: Vec3): { minX: number; maxX: number; minY: number; maxY: n
   }
 }
 
-function segmentIntersectsAABB(
-  from: Vec3,
-  to: Vec3,
-  aabb: ReturnType<typeof botAABB>,
-): boolean {
+function segmentIntersectsAABB(from: Vec3, to: Vec3, aabb: ReturnType<typeof botAABB>): boolean {
   const dx = to.x - from.x
   const dy = to.y - from.y
   const dz = to.z - from.z
@@ -110,7 +112,12 @@ function simulateArrowImpact(
     frame = stepArrow(frame)
 
     if (segmentIntersectsAABB(prev, frame.pos, expandedAABB)) {
-      return { tick: t, arrowPosAtImpact: frame.pos, arrowVelAtImpact: frame.vel, prevArrowPos: prev }
+      return {
+        tick: t,
+        arrowPosAtImpact: frame.pos,
+        arrowVelAtImpact: frame.vel,
+        prevArrowPos: prev,
+      }
     }
 
     if (frame.pos.y < botPos.y - 5) break
@@ -118,19 +125,11 @@ function simulateArrowImpact(
   return null
 }
 
-function nearestPointOnLine2D(
-  lineOrigin: Vec3,
-  lineDir: Vec3,
-  point: Vec3,
-): Vec3 {
+function nearestPointOnLine2D(lineOrigin: Vec3, lineDir: Vec3, point: Vec3): Vec3 {
   const t =
     ((point.x - lineOrigin.x) * lineDir.x + (point.z - lineOrigin.z) * lineDir.z) /
     (lineDir.x * lineDir.x + lineDir.z * lineDir.z + 1e-9)
-  return new Vec3(
-    lineOrigin.x + t * lineDir.x,
-    0,
-    lineOrigin.z + t * lineDir.z,
-  )
+  return new Vec3(lineOrigin.x + t * lineDir.x, 0, lineOrigin.z + t * lineDir.z)
 }
 
 function canWalkTowards(bot: Bot, from: Vec3, towards: Vec3, checkDist: number): boolean {
@@ -140,7 +139,11 @@ function canWalkTowards(bot: Bot, from: Vec3, towards: Vec3, checkDist: number):
   const norm = new Vec3(dir.x / len, 0, dir.z / len)
   const checkTo = from.offset(norm.x * checkDist, 0, norm.z * checkDist)
 
-  const world = (bot as unknown as { world: { raycast: (from: Vec3, direction: Vec3, range: number) => { position: Vec3 } | null } }).world
+  const world = (
+    bot as unknown as {
+      world: { raycast: (from: Vec3, direction: Vec3, range: number) => { position: Vec3 } | null }
+    }
+  ).world
   if (!world?.raycast) return true
 
   for (const yOffset of [0.6, 1.6]) {
@@ -163,28 +166,32 @@ interface DodgeSolution {
   urgency: number
 }
 
-function planArrowDodge(
-  bot: Bot,
-  impact: ImpactInfo,
-  config: DodgeConfig,
-): DodgeSolution {
+function planArrowDodge(bot: Bot, impact: ImpactInfo, config: DodgeConfig): DodgeSolution {
   const botPos = bot.entity.position
   const vel2d = new Vec3(impact.arrowVelAtImpact.x, 0, impact.arrowVelAtImpact.z)
   const speed2d = vectorMagnitude(vel2d)
 
-  const rightPerp = speed2d > 0.01
-    ? new Vec3(vel2d.z / speed2d, 0, -vel2d.x / speed2d)
-    : new Vec3(1, 0, 0)
+  const rightPerp =
+    speed2d > 0.01 ? new Vec3(vel2d.z / speed2d, 0, -vel2d.x / speed2d) : new Vec3(1, 0, 0)
 
   const lineOrigin = new Vec3(impact.prevArrowPos.x, 0, impact.prevArrowPos.z)
-  const lineDir = speed2d > 0.01 ? new Vec3(vel2d.x / speed2d, 0, vel2d.z / speed2d) : new Vec3(1, 0, 0)
+  const lineDir =
+    speed2d > 0.01 ? new Vec3(vel2d.x / speed2d, 0, vel2d.z / speed2d) : new Vec3(1, 0, 0)
 
   const nearest = nearestPointOnLine2D(lineOrigin, lineDir, new Vec3(botPos.x, 0, botPos.z))
   const toBot = new Vec3(botPos.x - nearest.x, 0, botPos.z - nearest.z)
   const dot = toBot.x * rightPerp.x + toBot.z * rightPerp.z
 
-  const safeRight = nearest.offset(rightPerp.x * DANGER_ZONE_PADDING, 0, rightPerp.z * DANGER_ZONE_PADDING)
-  const safeLeft = nearest.offset(-rightPerp.x * DANGER_ZONE_PADDING, 0, -rightPerp.z * DANGER_ZONE_PADDING)
+  const safeRight = nearest.offset(
+    rightPerp.x * DANGER_ZONE_PADDING,
+    0,
+    rightPerp.z * DANGER_ZONE_PADDING,
+  )
+  const safeLeft = nearest.offset(
+    -rightPerp.x * DANGER_ZONE_PADDING,
+    0,
+    -rightPerp.z * DANGER_ZONE_PADDING,
+  )
 
   const botVel2d = new Vec3(bot.entity.velocity.x, 0, bot.entity.velocity.z)
   const momentumRight = botVel2d.x * rightPerp.x + botVel2d.z * rightPerp.z
@@ -210,7 +217,8 @@ function planArrowDodge(
   const urgency = clamp(ticksNeeded / Math.max(1, ticksAvailable), 0, 1)
 
   const heightAtImpact = impact.arrowPosAtImpact.y - botPos.y
-  const jumpClears = heightAtImpact < 0.5 && heightAtImpact > -0.3 && bot.entity.onGround && config.jumpEnabled
+  const jumpClears =
+    heightAtImpact < 0.5 && heightAtImpact > -0.3 && bot.entity.onGround && config.jumpEnabled
   const shouldJump = jumpClears && urgency > 0.6
 
   const dodgeTickDuration = Math.max(4, Math.min(12, Math.ceil(ticksNeeded * 1.2)))
@@ -264,7 +272,10 @@ export class DodgeController {
     await this.dodgeProjectile(bot, threat)
   }
 
-  private async dodgeProjectile(bot: Bot, threat: IncomingProjectile | AimingEntity): Promise<void> {
+  private async dodgeProjectile(
+    bot: Bot,
+    threat: IncomingProjectile | AimingEntity,
+  ): Promise<void> {
     const projectile = threat.entity
 
     const impact = simulateArrowImpact(
@@ -282,7 +293,8 @@ export class DodgeController {
     const solution = planArrowDodge(bot, impact, this.config)
     if (!solution.dodgeDir) return
 
-    const reactionMs = this.config.reactionDelayMs.min +
+    const reactionMs =
+      this.config.reactionDelayMs.min +
       Math.random() * (this.config.reactionDelayMs.max - this.config.reactionDelayMs.min)
 
     if (reactionMs > 0 && impact.tick > 2) {
@@ -347,8 +359,10 @@ export class DodgeController {
 
       for (let i = 0; i < 6; i++) {
         bot.attack(fireball)
-        await delay(this.config.deflectIntervalMs.min +
-          Math.random() * (this.config.deflectIntervalMs.max - this.config.deflectIntervalMs.min))
+        await delay(
+          this.config.deflectIntervalMs.min +
+            Math.random() * (this.config.deflectIntervalMs.max - this.config.deflectIntervalMs.min),
+        )
       }
     } finally {
       this.deflecting = false

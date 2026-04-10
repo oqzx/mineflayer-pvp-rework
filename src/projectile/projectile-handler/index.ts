@@ -1,1 +1,1 @@
-export { BowPVP as ProjectileHandler } from './raw'
+export { BowPVP as ProjectileHandler } from './bow-handler'

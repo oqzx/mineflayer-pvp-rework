@@ -22,7 +22,6 @@ export class RotationSmoother {
   private lastUpdateTick = 0
 
   smooth(current: Rotation, target: Rotation, tick: number): Rotation {
-    const deltaTick = tick - this.lastUpdateTick
     this.lastUpdateTick = tick
 
     const yawDiff = angleDifference(target.yaw, current.yaw)

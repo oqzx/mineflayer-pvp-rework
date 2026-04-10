@@ -15,6 +15,9 @@ const AIM_EPSILON = 1e-2
 const CHARGE_WEAPONS = new Set(['bow', 'crossbow', 'crossbow_firework', 'trident'])
 const THROW_WEAPONS = new Set(['snowball', 'ender_pearl', 'egg', 'splash_potion'])
 const RANGED_PRIORITY = ['bow', 'crossbow', 'crossbow_firework'] as const
+const PHYSICS_DT_SECONDS = 1 / 20
+const VELOCITY_SAMPLE_WINDOW = 8
+const VELOCITY_EMA_ALPHA = 0.35
 
 type RangedWeapon =
   | (typeof RANGED_PRIORITY)[number]
@@ -31,6 +34,42 @@ function deltaRad(yaw1: number, yaw2: number) {
   if (dYaw < -PI) dYaw += PI_2
   else if (dYaw > PI) dYaw -= PI_2
   return dYaw
+}
+
+type VelocitySample = {
+  pos: Vec3
+  timestamp: number
+}
+
+class LocalEntityVelocityTracker {
+  private readonly samples = new Map<number, VelocitySample[]>()
+  private readonly smoothedVelocity = new Map<number, Vec3>()
+
+  record(entity: Entity, timestamp: number): void {
+    const id = entity.id
+    const history = this.samples.get(id) ?? []
+    history.push({ pos: entity.position.clone(), timestamp })
+    if (history.length > VELOCITY_SAMPLE_WINDOW) history.shift()
+    this.samples.set(id, history)
+
+    if (history.length < 2) return
+    const prev = history[history.length - 2]!
+    const curr = history[history.length - 1]!
+    const dt = Math.max((curr.timestamp - prev.timestamp) / 1000, PHYSICS_DT_SECONDS)
+    const instant = curr.pos.minus(prev.pos).scaled(1 / dt)
+    const current = this.smoothedVelocity.get(id) ?? new Vec3(0, 0, 0)
+    const next = current.scaled(1 - VELOCITY_EMA_ALPHA).plus(instant.scaled(VELOCITY_EMA_ALPHA))
+    this.smoothedVelocity.set(id, next)
+  }
+
+  get(entity: Entity): Vec3 {
+    return this.smoothedVelocity.get(entity.id)?.clone() ?? new Vec3(0, 0, 0)
+  }
+
+  clear(entity: Entity): void {
+    this.samples.delete(entity.id)
+    this.smoothedVelocity.delete(entity.id)
+  }
 }
 
 export class BowPVP {
@@ -52,6 +91,7 @@ export class BowPVP {
   private awaitingRelease: boolean = false
   private engageRequestId: number = 0
   private engagingTargetId: number | null = null
+  private readonly localVelocityTracker = new LocalEntityVelocityTracker()
 
   constructor(
     private bot: Bot,
@@ -136,7 +176,7 @@ export class BowPVP {
   }
 
   private getVelocity(entity: Entity): Vec3 {
-    return this.bot.tracker.getEntitySpeed(entity) || new Vec3(0, 0, 0)
+    return this.localVelocityTracker.get(entity)
   }
 
   public shotToEntity(entity: Entity, velocity?: Vec3, weapon: RangedWeapon = this.weapon) {
@@ -204,6 +244,7 @@ export class BowPVP {
     this.bot.removeListener('physicsTick', this.chargeHandling)
     this.stopTrackingRotation()
     if (this.target) this.bot.tracker.stopTrackingEntity(this.target)
+    if (this.target) this.localVelocityTracker.clear(this.target)
     if (this.shotCharging) {
       if (this.shotInfo) await this.bot.look(this.shotInfo.yaw, this.shotInfo.pitch, true)
       this.bot.deactivateItem()
@@ -279,6 +320,7 @@ export class BowPVP {
 
   private getShotInfo = async () => {
     if (!this.enabled || !this.target) return
+    this.localVelocityTracker.record(this.target, performance.now())
     this.shotInfo = this.shotToEntity(this.target, this.getVelocity(this.target))
   }
 
