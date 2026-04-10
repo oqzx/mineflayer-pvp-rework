@@ -41,7 +41,7 @@ export class StrafeController {
     attackRange: number,
     forcedDir?: 'left' | 'right',
     fatigueMultiplier = 1,
-    hitsLanded = 0,
+    _hitsLanded = 0,
   ): void {
     if (!this.config.enabled) return
 
@@ -65,7 +65,7 @@ export class StrafeController {
       return
     }
 
-    if (bot.entity.isCollidedHorizontally) {
+    if ((bot.entity as { isCollidedHorizontally?: boolean }).isCollidedHorizontally) {
       this.orbitDir = (this.orbitDir * -1) as 1 | -1
     }
 
@@ -136,10 +136,10 @@ export class StrafeController {
         this.velHistory.push({ x: vel.x, z: vel.z })
         if (this.velHistory.length > 8) this.velHistory.shift()
 
-        const avg = this.velHistory.reduce(
-          (acc, v) => ({ x: acc.x + v.x, z: acc.z + v.z }),
-          { x: 0, z: 0 },
-        )
+        const avg = this.velHistory.reduce((acc, v) => ({ x: acc.x + v.x, z: acc.z + v.z }), {
+          x: 0,
+          z: 0,
+        })
         const len = this.velHistory.length
         avg.x /= len
         avg.z /= len
@@ -239,7 +239,7 @@ export class StrafeController {
       this.pattern = 'oscillate'
       this.patternTicksLeft = randomIntInRange({ min: 10, max: 20 })
       this.oscillateTick = 0
-    } else if (r < (highEntropy ? 0.88 : 0.80)) {
+    } else if (r < (highEntropy ? 0.88 : 0.8)) {
       this.pattern = 'feint'
       this.feintPhase = 'fake'
       this.feintTicksLeft = randomIntInRange({ min: 2, max: 5 })

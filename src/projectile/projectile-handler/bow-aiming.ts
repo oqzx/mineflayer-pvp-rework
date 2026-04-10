@@ -37,7 +37,6 @@ export type ShotDebugInfo = {
 const ARROW_DRAG = 0.99
 const ARROW_GRAVITY = 0.05
 const PLAYER_WIDTH = 0.6
-const PLAYER_HEIGHT = 1.8
 const ARROW_SIZE = 0.5
 const MAX_FLIGHT_TICKS = 200
 const PITCH_LOWER = -Math.PI * 0.44
@@ -54,9 +53,9 @@ const REACT_TICKS = 5
 type PositionSample = { pos: Vec3; timestamp: number; tick: number }
 type RawTrajectoryPoint = { pos: Vec3; vel: Vec3; tick: number }
 
-let debugLog: (...args: any[]) => void = () => { }
+let debugLog: (...args: unknown[]) => void = () => {}
 export function enableDebugLogging(enabled: boolean): void {
-  debugLog = enabled ? (...args) => console.log('[BowAiming]', ...args) : () => { }
+  debugLog = enabled ? (...args) => console.log('[BowAiming]', ...args) : () => {}
 }
 
 const shotHistory: ShotDebugInfo[] = []
@@ -66,50 +65,24 @@ export function getShotHistory(): ReadonlyArray<ShotDebugInfo> {
   return shotHistory
 }
 
-export function getAccuracyStats(): { shots: number; hits: number; avgExpectedMiss: number; avgActualMiss: number; hitRate: number } {
+export function getAccuracyStats(): {
+  shots: number
+  hits: number
+  avgExpectedMiss: number
+  avgActualMiss: number
+  hitRate: number
+} {
   const shots = shotHistory.length
-  const hits = shotHistory.filter(s => s.actualHit).length
-  const avgExpectedMiss = shots > 0 ? shotHistory.reduce((a, b) => a + b.expectedMissDist, 0) / shots : 0
-  const avgActualMiss = shots > 0 ? shotHistory.reduce((a, b) => a + b.actualMissDist, 0) / shots : 0
+  const hits = shotHistory.filter((s) => s.actualHit).length
+  const avgExpectedMiss =
+    shots > 0 ? shotHistory.reduce((a, b) => a + b.expectedMissDist, 0) / shots : 0
+  const avgActualMiss =
+    shots > 0 ? shotHistory.reduce((a, b) => a + b.actualMissDist, 0) / shots : 0
   return { shots, hits, avgExpectedMiss, avgActualMiss, hitRate: shots > 0 ? hits / shots : 0 }
 }
 
 export function clearShotHistory(): void {
   shotHistory.length = 0
-}
-
-function identityP(n: number): number[][] {
-  return Array.from({ length: n }, (_, i) =>
-    Array.from({ length: n }, (_, j) => (i === j ? 1 : 0))
-  )
-}
-function matMul(A: number[][], B: number[][]): number[][] {
-  const m = A.length, k = B.length, n = B[0]!.length
-  const C = Array.from({ length: m }, () => new Array<number>(n).fill(0))
-  for (let i = 0; i < m; i++) for (let j = 0; j < n; j++) for (let l = 0; l < k; l++) C[i]![j]! += A[i]![l]! * B[l]![j]!
-  return C
-}
-function matAdd(A: number[][], B: number[][]): number[][] {
-  return A.map((row, i) => row.map((v, j) => v + B[i]![j]!))
-}
-function matSub(A: number[][], B: number[][]): number[][] {
-  return A.map((row, i) => row.map((v, j) => v - B[i]![j]!))
-}
-function matTranspose(A: number[][]): number[][] {
-  return A[0]!.map((_, j) => A.map((row) => row[j]!))
-}
-function mat3x3Inv(M: number[][]): number[][] {
-  const a = M[0]![0]!, b = M[0]![1]!, c = M[0]![2]!, d = M[1]![0]!, e = M[1]![1]!, f = M[1]![2]!, g = M[2]![0]!, h = M[2]![1]!, ii = M[2]![2]!
-  const det = a * (e * ii - f * h) - b * (d * ii - f * g) + c * (d * h - e * g)
-  if (Math.abs(det) < 1e-12) return identityP(3)
-  return [
-    [(e * ii - f * h) / det, (c * h - b * ii) / det, (b * f - c * e) / det],
-    [(f * g - d * ii) / det, (a * ii - c * g) / det, (c * d - a * f) / det],
-    [(d * h - e * g) / det, (b * g - a * h) / det, (a * e - b * d) / det],
-  ]
-}
-function scalarMulMat(s: number, A: number[][]): number[][] {
-  return A.map((row) => row.map((v) => v * s))
 }
 
 class HighPrecisionVelocityTracker {
@@ -129,7 +102,9 @@ class HighPrecisionVelocityTracker {
     const dt = (newest.timestamp - oldest.timestamp) / 1000
     if (dt <= 0) return
     const rawVel = newest.pos.minus(oldest.pos).scaled(1 / dt)
-    this.smoothedVel = this.smoothedVel.scaled(VELOCITY_SMOOTH_FACTOR).add(rawVel.scaled(1 - VELOCITY_SMOOTH_FACTOR))
+    this.smoothedVel = this.smoothedVel
+      .scaled(VELOCITY_SMOOTH_FACTOR)
+      .add(rawVel.scaled(1 - VELOCITY_SMOOTH_FACTOR))
   }
 
   getVelocity(): Vec3 {
@@ -156,9 +131,15 @@ class PreciseTargetPredictor {
       const dt = (timestamp - this.lastTimestamp) / 1000
       if (dt > 0) {
         const velDiff = this.velTracker.getVelocity().minus(this.lastPos.minus(pos).scaled(1 / dt))
-        this.accelerationEstimate.x = this.accelerationAlpha * velDiff.x + (1 - this.accelerationAlpha) * this.accelerationEstimate.x
-        this.accelerationEstimate.y = this.accelerationAlpha * velDiff.y + (1 - this.accelerationAlpha) * this.accelerationEstimate.y
-        this.accelerationEstimate.z = this.accelerationAlpha * velDiff.z + (1 - this.accelerationAlpha) * this.accelerationEstimate.z
+        this.accelerationEstimate.x =
+          this.accelerationAlpha * velDiff.x +
+          (1 - this.accelerationAlpha) * this.accelerationEstimate.x
+        this.accelerationEstimate.y =
+          this.accelerationAlpha * velDiff.y +
+          (1 - this.accelerationAlpha) * this.accelerationEstimate.y
+        this.accelerationEstimate.z =
+          this.accelerationAlpha * velDiff.z +
+          (1 - this.accelerationAlpha) * this.accelerationEstimate.z
       }
     }
     this.lastPos = pos.clone()
@@ -170,8 +151,8 @@ class PreciseTargetPredictor {
     const vel = this.velTracker.getVelocity()
     const acc = this.accelerationEstimate.clone()
     const startPos = this.lastPos.clone()
-    let pos = startPos.clone()
-    let v = vel.clone()
+    const pos = startPos.clone()
+    const v = vel.clone()
     const dtPerTick = 1 / 20
     for (let i = 0; i < ticksAhead; i++) {
       v.x += acc.x * dtPerTick
@@ -216,10 +197,20 @@ class PreciseTargetPredictor {
   }
 }
 
-function simulateArrowPrecise(origin: Vec3, yaw: number, pitch: number, weaponName: string, maxTicks = MAX_FLIGHT_TICKS): RawTrajectoryPoint[] {
+function simulateArrowPrecise(
+  origin: Vec3,
+  yaw: number,
+  pitch: number,
+  weaponName: string,
+  maxTicks = MAX_FLIGHT_TICKS,
+): RawTrajectoryPoint[] {
   const info = trajectoryInfo[weaponName] ?? trajectoryInfo['bow']!
   const cosPitch = Math.cos(pitch)
-  const vel = new Vec3(-info.v0 * Math.sin(yaw) * cosPitch, info.v0 * Math.sin(pitch), info.v0 * Math.cos(yaw) * cosPitch)
+  const vel = new Vec3(
+    -info.v0 * Math.sin(yaw) * cosPitch,
+    info.v0 * Math.sin(pitch),
+    info.v0 * Math.cos(yaw) * cosPitch,
+  )
   const pos = origin.clone()
   const pts: RawTrajectoryPoint[] = []
   for (let t = 0; t < maxTicks; t++) {
@@ -237,7 +228,14 @@ function simulateArrowPrecise(origin: Vec3, yaw: number, pitch: number, weaponNa
 }
 
 function aabbCollide(aMin: Vec3, aMax: Vec3, bMin: Vec3, bMax: Vec3): boolean {
-  return (aMin.x < bMax.x && aMax.x > bMin.x) && (aMin.y < bMax.y && aMax.y > bMin.y) && (aMin.z < bMax.z && aMax.z > bMin.z)
+  return (
+    aMin.x < bMax.x &&
+    aMax.x > bMin.x &&
+    aMin.y < bMax.y &&
+    aMax.y > bMin.y &&
+    aMin.z < bMax.z &&
+    aMax.z > bMin.z
+  )
 }
 
 function computeMissDistance(
@@ -246,7 +244,7 @@ function computeMissDistance(
   origin: Vec3,
   targetFuturePositions: Vec3[],
   entityHeight: number,
-  weaponName: string
+  weaponName: string,
 ): { missDist: number; impactPos: Vec3; flightTicks: number } {
   const arrow = simulateArrowPrecise(origin, yaw, pitch, weaponName, targetFuturePositions.length)
   let minDist = Infinity
@@ -263,7 +261,10 @@ function computeMissDistance(
       return { missDist: 0, impactPos: aPos.clone(), flightTicks: i + 1 }
     }
     const dx = Math.max(0, Math.abs(aPos.x - tPos.x) - (ARROW_SIZE / 2 + PLAYER_WIDTH / 2))
-    const dy = Math.max(0, Math.abs(aPos.y - (tPos.y + entityHeight / 2)) - (ARROW_SIZE / 2 + entityHeight / 2))
+    const dy = Math.max(
+      0,
+      Math.abs(aPos.y - (tPos.y + entityHeight / 2)) - (ARROW_SIZE / 2 + entityHeight / 2),
+    )
     const dz = Math.max(0, Math.abs(aPos.z - tPos.z) - (ARROW_SIZE / 2 + PLAYER_WIDTH / 2))
     const dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
     if (dist < minDist) {
@@ -281,7 +282,7 @@ function solveOptimalAim(
   predictor: PreciseTargetPredictor,
   entityHeight: number,
   weaponName: string,
-  bot: Bot
+  bot: Bot,
 ): { aim: SolvedAim; expectedMiss: number } | null {
   const maxTicks = MAX_FLIGHT_TICKS
   const futurePositions: Vec3[] = []
@@ -290,7 +291,8 @@ function solveOptimalAim(
   }
 
   const costFunc = (yaw: number, pitch: number) => {
-    return computeMissDistance(yaw, pitch, origin, futurePositions, entityHeight, weaponName).missDist
+    return computeMissDistance(yaw, pitch, origin, futurePositions, entityHeight, weaponName)
+      .missDist
   }
 
   const roughDist = targetStartPos.distanceTo(origin)
@@ -308,7 +310,7 @@ function solveOptimalAim(
   for (let i = 0; i < OPT_GRID_STEPS; i++) {
     const yaw = initYaw - yawRange + (2 * yawRange * i) / (OPT_GRID_STEPS - 1)
     for (let j = 0; j < OPT_GRID_STEPS; j++) {
-      const pitch = PITCH_LOWER + (PITCH_UPPER - PITCH_LOWER) * j / (OPT_GRID_STEPS - 1)
+      const pitch = PITCH_LOWER + ((PITCH_UPPER - PITCH_LOWER) * j) / (OPT_GRID_STEPS - 1)
       const c = costFunc(yaw, pitch)
       if (c < bestCost) {
         bestCost = c
@@ -318,16 +320,28 @@ function solveOptimalAim(
     }
   }
 
-  const simplex = (f: (x: number, y: number) => number, x0: number, y0: number, step: number, maxIter: number, tol: number) => {
-    let points = [
+  const simplex = (
+    f: (x: number, y: number) => number,
+    x0: number,
+    y0: number,
+    step: number,
+    maxIter: number,
+    tol: number,
+  ) => {
+    const points = [
       { x: x0, y: y0, fx: f(x0, y0) },
       { x: x0 + step, y: y0, fx: f(x0 + step, y0) },
       { x: x0, y: y0 + step, fx: f(x0, y0 + step) },
     ]
-    const alpha = 1, gamma = 2, rho = 0.5, sigma = 0.5
+    const alpha = 1,
+      gamma = 2,
+      rho = 0.5,
+      sigma = 0.5
     for (let iter = 0; iter < maxIter; iter++) {
       points.sort((a, b) => a.fx - b.fx)
-      const best = points[0]!, good = points[1]!, worst = points[2]!
+      const best = points[0]!,
+        good = points[1]!,
+        worst = points[2]!
       const range = Math.abs(best.fx - worst.fx)
       if (range < tol) break
       const xc = (best.x + good.x) / 2
@@ -349,8 +363,16 @@ function solveOptimalAim(
         if (fxcon < worst.fx) {
           points[2] = { x: xcon, y: ycon, fx: fxcon }
         } else {
-          points[1] = { x: best.x + sigma * (good.x - best.x), y: best.y + sigma * (good.y - best.y), fx: f(best.x + sigma * (good.x - best.x), best.y + sigma * (good.y - best.y)) }
-          points[2] = { x: best.x + sigma * (worst.x - best.x), y: best.y + sigma * (worst.y - best.y), fx: f(best.x + sigma * (worst.x - best.x), best.y + sigma * (worst.y - best.y)) }
+          points[1] = {
+            x: best.x + sigma * (good.x - best.x),
+            y: best.y + sigma * (good.y - best.y),
+            fx: f(best.x + sigma * (good.x - best.x), best.y + sigma * (good.y - best.y)),
+          }
+          points[2] = {
+            x: best.x + sigma * (worst.x - best.x),
+            y: best.y + sigma * (worst.y - best.y),
+            fx: f(best.x + sigma * (worst.x - best.x), best.y + sigma * (worst.y - best.y)),
+          }
         }
       }
     }
@@ -365,10 +387,12 @@ function solveOptimalAim(
 
   for (let iter = 0; iter < OPT_LOCAL_STEPS; iter++) {
     const step = 0.005 / (iter + 1)
-    const candidates = [
+    const candidates: Array<[number, number]> = [
       [finalYaw, finalPitch],
-      [finalYaw + step, finalPitch], [finalYaw - step, finalPitch],
-      [finalYaw, finalPitch + step], [finalYaw, finalPitch - step],
+      [finalYaw + step, finalPitch],
+      [finalYaw - step, finalPitch],
+      [finalYaw, finalPitch + step],
+      [finalYaw, finalPitch - step],
     ]
     for (const [y, p] of candidates) {
       const clampedPitch = Math.min(PITCH_UPPER, Math.max(PITCH_LOWER, p))
@@ -381,15 +405,22 @@ function solveOptimalAim(
     }
   }
 
-  const finalRes = computeMissDistance(finalYaw, finalPitch, origin, futurePositions, entityHeight, weaponName)
+  const finalRes = computeMissDistance(
+    finalYaw,
+    finalPitch,
+    origin,
+    futurePositions,
+    entityHeight,
+    weaponName,
+  )
   return {
     aim: {
       yaw: finalYaw,
       pitch: finalPitch,
       flightTicks: finalRes.flightTicks,
-      impactPosition: finalRes.impactPos
+      impactPosition: finalRes.impactPos,
     },
-    expectedMiss: finalRes.missDist
+    expectedMiss: finalRes.missDist,
   }
 }
 
@@ -429,7 +460,7 @@ export class BowAiming {
     shotTick: number
   } | null = null
 
-  constructor(private readonly config: BowConfig) { }
+  constructor(private readonly config: BowConfig) {}
 
   compute(bot: Bot, target: Entity, weaponName: string): AimResult | null {
     this.tick++
@@ -451,7 +482,14 @@ export class BowAiming {
       }
     }
 
-    const solution = solveOptimalAim(eyePos, targetPos, this.predictor, target.height, weaponName, bot)
+    const solution = solveOptimalAim(
+      eyePos,
+      targetPos,
+      this.predictor,
+      target.height,
+      weaponName,
+      bot,
+    )
     if (!solution) return null
 
     this.pendingShot = {
@@ -459,23 +497,27 @@ export class BowAiming {
       predictedAim: solution.aim,
       expectedMiss: solution.expectedMiss,
       weaponName,
-      knockbackDir,
-      shotTick: this.tick
+      ...(knockbackDir ? { knockbackDir } : {}),
+      shotTick: this.tick,
     }
 
     debugLog('Aim computed', {
       yaw: solution.aim.yaw,
       pitch: solution.aim.pitch,
       expectedMiss: solution.expectedMiss,
-      flightTicks: solution.aim.flightTicks
+      flightTicks: solution.aim.flightTicks,
     })
 
-    return { ...solution.aim, weaponName, knockbackDir }
+    return {
+      ...solution.aim,
+      weaponName,
+      ...(knockbackDir ? { knockbackDir } : {}),
+    }
   }
 
   recordShotResult(hit: boolean, actualImpactTick?: number): void {
     if (!this.pendingShot) return
-    const { target, predictedAim, expectedMiss, weaponName, knockbackDir, shotTick } = this.pendingShot
+    const { target, predictedAim, expectedMiss, knockbackDir } = this.pendingShot
     const actualPos = target.position.clone()
     const actualVel = this.predictor.getEstimatedVelocity()
     const actualMissDist = hit ? 0 : actualPos.distanceTo(predictedAim.impactPosition)
@@ -494,7 +536,7 @@ export class BowAiming {
       targetVelocity: actualVel,
       regime: 'interpolated',
       scenariosUsed: 1,
-      knockbackDir: knockbackDir?.clone()
+      ...(knockbackDir ? { knockbackDir: knockbackDir.clone() } : {}),
     }
     shotHistory.push(debugInfo)
     if (shotHistory.length > MAX_HISTORY) shotHistory.shift()
@@ -502,7 +544,7 @@ export class BowAiming {
       hit,
       expectedMiss,
       actualMiss: actualMissDist,
-      targetId: target.id
+      targetId: target.id,
     })
     this.pendingShot = null
   }
