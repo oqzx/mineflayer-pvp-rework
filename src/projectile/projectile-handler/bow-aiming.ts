@@ -438,6 +438,14 @@ class MovementPredictor {
   }
 }
 
+function getEntityVelocity(bot: Bot, entity: Entity): Vec3 {
+  return (
+    (
+      bot as unknown as { tracker?: { getEntitySpeed(e: Entity): Vec3 | null } }
+    ).tracker?.getEntitySpeed(entity) ?? new Vec3(0, 0, 0)
+  )
+}
+
 type RawTrajectoryPoint = { pos: Vec3; vel: Vec3; tick: number }
 
 function simulateExact(
@@ -675,6 +683,11 @@ function solveOptimalAim(
     scenarios.map((s) => ({ w: s.weight, v: s.vel, a: s.acc })),
   )
 
+  let refinedScenarios = scenarios
+  let bestSolution: SolvedAim | null = null
+  let prevTargetPos: Vec3 | null = null
+  const DAMPING = 0.6
+
   const angles = optimizeAngles(origin, scenarios, basePos, entityHeight, weaponName)
   if (!angles) return null
 
@@ -688,9 +701,9 @@ function solveOptimalAim(
       const targetPos = basePos
         .offset(0, entityHeight * 0.5, 0)
         .offset(
-          sc.vel.x * pt.tick + 0.5 * sc.acc.x * pt.tick * pt.tick,
-          sc.vel.y * pt.tick + 0.5 * sc.acc.y * pt.tick * pt.tick,
-          sc.vel.z * pt.tick + 0.5 * sc.acc.z * pt.tick * pt.tick,
+          primary.vel.x * pt.tick + 0.5 * primary.acc.x * pt.tick * pt.tick,
+          primary.vel.y * pt.tick + 0.5 * primary.acc.y * pt.tick * pt.tick,
+          primary.vel.z * pt.tick + 0.5 * primary.acc.z * pt.tick * pt.tick,
         )
       return sum + sc.weight * pt.pos.distanceTo(targetPos)
     }, 0)
@@ -700,6 +713,33 @@ function solveOptimalAim(
       bestTick = pt.tick
       bestPt = pt
     }
+
+    if (bestDist < HIT_EPSILON) {
+      log('  hit epsilon reached, breaking')
+      break
+    }
+
+    if (prevTargetPos) {
+      const dampedTarget = bestTargetPos!.scaled(1 - DAMPING).add(prevTargetPos.scaled(DAMPING))
+      log('  damped target update:', dampedTarget)
+      refinedScenarios = [
+        {
+          ...primary,
+          vel: dampedTarget.minus(basePos).scaled(1 / bestTick),
+          acc: primary.acc,
+        },
+      ]
+      basePos = dampedTarget.clone()
+    } else {
+      refinedScenarios = [
+        {
+          ...primary,
+          vel: bestTargetPos!.minus(basePos).scaled(1 / bestTick),
+          acc: primary.acc,
+        },
+      ]
+    }
+    prevTargetPos = bestTargetPos
   }
 
   if (!bestPt || bestDist > 2.5) return null
