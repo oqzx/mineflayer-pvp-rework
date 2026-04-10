@@ -3,6 +3,12 @@ import type { Entity } from 'prismarine-entity'
 import { Vec3 } from 'vec3'
 import type { BowConfig } from '../../config/types.js'
 import { trajectoryInfo } from '../../calc/constants.js'
+import { AABBUtils } from '@nxg-org/mineflayer-util-plugin'
+import {
+  ShotFactory,
+  InterceptFunctions,
+  type BasicShotInfo,
+} from '@nxg-org/mineflayer-trajectories'
 
 export type SolvedAim = {
   yaw: number
@@ -34,26 +40,19 @@ export type ShotDebugInfo = {
   knockbackDir?: Vec3
 }
 
-const ARROW_DRAG = 0.99
 const ARROW_GRAVITY = 0.05
 const PLAYER_WIDTH = 0.6
-const ARROW_SIZE = 0.5
-const MAX_FLIGHT_TICKS = 200
-const PITCH_LOWER = -Math.PI * 0.44
-const PITCH_UPPER = Math.PI * 0.22
-const VELOCITY_SMOOTH_FACTOR = 0.85
-const POSITION_HISTORY_SIZE = 20
-const OPT_GRID_STEPS = 100
-const OPT_NM_ITER = 200
-const OPT_NM_TOL = 1e-8
-const OPT_LOCAL_STEPS = 12
+const PITCH_MIN = -Math.PI * 0.44
+const PITCH_MAX = Math.PI * 0.22
+const VELOCITY_ALPHA = 0.55
+const VELOCITY_HISTORY_TICKS = 10
+const INTERCEPT_MAX_ITER = 20
+const INTERCEPT_CONVERGENCE = 0.005
+const PITCH_BISECT_ITER = 48
 const LATENCY_TICKS = 2
-const REACT_TICKS = 5
-
-type PositionSample = { pos: Vec3; timestamp: number; tick: number }
-type RawTrajectoryPoint = { pos: Vec3; vel: Vec3; tick: number }
 
 let debugLog: (...args: unknown[]) => void = () => {}
+
 export function enableDebugLogging(enabled: boolean): void {
   debugLog = enabled ? (...args) => console.log('[BowAiming]', ...args) : () => {}
 }
@@ -85,349 +84,264 @@ export function clearShotHistory(): void {
   shotHistory.length = 0
 }
 
-class HighPrecisionVelocityTracker {
-  private history: PositionSample[] = []
-  private smoothedVel: Vec3 = new Vec3(0, 0, 0)
+type TickSample = { pos: Vec3; tick: number }
 
-  record(pos: Vec3, timestamp: number, tick: number): void {
-    this.history.push({ pos: pos.clone(), timestamp, tick })
-    if (this.history.length > POSITION_HISTORY_SIZE) this.history.shift()
-    this.updateSmoothedVelocity()
+class TickVelocityTracker {
+  private readonly history: TickSample[] = []
+  private emaVel: Vec3 = new Vec3(0, 0, 0)
+
+  recordTick(pos: Vec3, tick: number): void {
+    const prev = this.history[this.history.length - 1]
+    if (prev !== undefined && tick > prev.tick) {
+      const dtTicks = tick - prev.tick
+      const rawVel = pos.minus(prev.pos).scaled(1 / dtTicks)
+      this.emaVel = this.emaVel
+        .scaled(1 - VELOCITY_ALPHA)
+        .add(rawVel.scaled(VELOCITY_ALPHA))
+    }
+    this.history.push({ pos: pos.clone(), tick })
+    if (this.history.length > VELOCITY_HISTORY_TICKS) this.history.shift()
   }
 
-  private updateSmoothedVelocity(): void {
-    if (this.history.length < 2) return
-    const newest = this.history[this.history.length - 1]!
-    const oldest = this.history[0]!
-    const dt = (newest.timestamp - oldest.timestamp) / 1000
-    if (dt <= 0) return
-    const rawVel = newest.pos.minus(oldest.pos).scaled(1 / dt)
-    this.smoothedVel = this.smoothedVel
-      .scaled(VELOCITY_SMOOTH_FACTOR)
-      .add(rawVel.scaled(1 - VELOCITY_SMOOTH_FACTOR))
+  getVelocityPerTick(): Vec3 {
+    return this.emaVel.clone()
   }
 
-  getVelocity(): Vec3 {
-    return this.smoothedVel.clone()
+  getLatestPosition(): Vec3 | null {
+    return this.history.length > 0 ? this.history[this.history.length - 1]!.pos.clone() : null
   }
 
   reset(): void {
-    this.history = []
-    this.smoothedVel = new Vec3(0, 0, 0)
+    this.history.length = 0
+    this.emaVel = new Vec3(0, 0, 0)
   }
 }
 
-class PreciseTargetPredictor {
-  private readonly velTracker = new HighPrecisionVelocityTracker()
-  private lastPos: Vec3 = new Vec3(0, 0, 0)
-  private lastTimestamp: number = 0
-  private tickOffset: number = 0
-  private readonly accelerationEstimate: Vec3 = new Vec3(0, 0, 0)
-  private accelerationAlpha = 0.3
+type ArrowPoint = { pos: Vec3; vel: Vec3; tick: number }
 
-  record(pos: Vec3, timestamp: number, tick: number): void {
-    this.velTracker.record(pos, timestamp, tick)
-    if (this.lastTimestamp > 0) {
-      const dt = (timestamp - this.lastTimestamp) / 1000
-      if (dt > 0) {
-        const velDiff = this.velTracker.getVelocity().minus(this.lastPos.minus(pos).scaled(1 / dt))
-        this.accelerationEstimate.x =
-          this.accelerationAlpha * velDiff.x +
-          (1 - this.accelerationAlpha) * this.accelerationEstimate.x
-        this.accelerationEstimate.y =
-          this.accelerationAlpha * velDiff.y +
-          (1 - this.accelerationAlpha) * this.accelerationEstimate.y
-        this.accelerationEstimate.z =
-          this.accelerationAlpha * velDiff.z +
-          (1 - this.accelerationAlpha) * this.accelerationEstimate.z
-      }
-    }
-    this.lastPos = pos.clone()
-    this.lastTimestamp = timestamp
-    this.tickOffset = tick
-  }
-
-  predictFuturePosition(ticksAhead: number, bot?: Bot): Vec3 {
-    const vel = this.velTracker.getVelocity()
-    const acc = this.accelerationEstimate.clone()
-    const startPos = this.lastPos.clone()
-    const pos = startPos.clone()
-    const v = vel.clone()
-    const dtPerTick = 1 / 20
-    for (let i = 0; i < ticksAhead; i++) {
-      v.x += acc.x * dtPerTick
-      v.y += acc.y * dtPerTick
-      v.z += acc.z * dtPerTick
-      if (bot) {
-        const blockAtFeet = bot.blockAt(pos.offset(0, -0.1, 0))
-        const inWater = blockAtFeet?.name === 'water' || blockAtFeet?.name === 'lava'
-        if (inWater) {
-          v.y -= 0.02
-          v.y *= 0.8
-          v.x *= 0.8
-          v.z *= 0.8
-        } else {
-          v.y -= 0.08
-          v.y *= 0.98
-          const onGround = pos.y <= Math.floor(pos.y) + 0.2 && v.y <= 0
-          if (onGround) {
-            v.x *= 0.6
-            v.z *= 0.6
-            if (Math.abs(v.x) < 0.005) v.x = 0
-            if (Math.abs(v.z) < 0.005) v.z = 0
-          }
-        }
-      }
-      pos.x += v.x * dtPerTick
-      pos.y += v.y * dtPerTick
-      pos.z += v.z * dtPerTick
-    }
-    return pos
-  }
-
-  getEstimatedVelocity(): Vec3 {
-    return this.velTracker.getVelocity()
-  }
-
-  reset(): void {
-    this.velTracker.reset()
-    this.lastPos = new Vec3(0, 0, 0)
-    this.lastTimestamp = 0
-    this.accelerationEstimate.set(0, 0, 0)
-  }
-}
-
-function simulateArrowPrecise(
+function simulateArrow(
   origin: Vec3,
   yaw: number,
   pitch: number,
   weaponName: string,
-  maxTicks = MAX_FLIGHT_TICKS,
-): RawTrajectoryPoint[] {
+  maxTicks: number,
+): ArrowPoint[] {
   const info = trajectoryInfo[weaponName] ?? trajectoryInfo['bow']!
   const cosPitch = Math.cos(pitch)
-  const vel = new Vec3(
-    -info.v0 * Math.sin(yaw) * cosPitch,
-    info.v0 * Math.sin(pitch),
-    info.v0 * Math.cos(yaw) * cosPitch,
-  )
+  const thetaY = Math.PI + yaw
+  const vx = info.v0 * Math.sin(thetaY) * cosPitch
+  const vy = info.v0 * Math.sin(pitch)
+  const vz = info.v0 * Math.cos(thetaY) * cosPitch
+
+  const vel = new Vec3(vx, vy, vz)
   const pos = origin.clone()
-  const pts: RawTrajectoryPoint[] = []
+  const pts: ArrowPoint[] = []
+
   for (let t = 0; t < maxTicks; t++) {
-    vel.y -= ARROW_GRAVITY
-    vel.x *= ARROW_DRAG
-    vel.y *= ARROW_DRAG
-    vel.z *= ARROW_DRAG
+    vel.x *= info.drag
+    vel.y *= info.drag
+    vel.z *= info.drag
+    vel.y -= info.g
     pos.x += vel.x
     pos.y += vel.y
     pos.z += vel.z
     pts.push({ pos: pos.clone(), vel: vel.clone(), tick: t + 1 })
     if (pos.y < -64) break
   }
+
   return pts
 }
 
-function aabbCollide(aMin: Vec3, aMax: Vec3, bMin: Vec3, bMax: Vec3): boolean {
-  return (
-    aMin.x < bMax.x &&
-    aMax.x > bMin.x &&
-    aMin.y < bMax.y &&
-    aMax.y > bMin.y &&
-    aMin.z < bMax.z &&
-    aMax.z > bMin.z
-  )
-}
-
-function computeMissDistance(
-  yaw: number,
-  pitch: number,
-  origin: Vec3,
-  targetFuturePositions: Vec3[],
-  entityHeight: number,
-  weaponName: string,
-): { missDist: number; impactPos: Vec3; flightTicks: number } {
-  const arrow = simulateArrowPrecise(origin, yaw, pitch, weaponName, targetFuturePositions.length)
-  let minDist = Infinity
-  let bestImpact = origin
-  let bestTicks = 0
-  for (let i = 0; i < arrow.length; i++) {
-    const aPos = arrow[i]!.pos
-    const tPos = targetFuturePositions[i]!
-    const arrowMin = aPos.offset(-ARROW_SIZE / 2, -ARROW_SIZE / 2, -ARROW_SIZE / 2)
-    const arrowMax = aPos.offset(ARROW_SIZE / 2, ARROW_SIZE / 2, ARROW_SIZE / 2)
-    const targetMin = tPos.offset(-PLAYER_WIDTH / 2, 0, -PLAYER_WIDTH / 2)
-    const targetMax = tPos.offset(PLAYER_WIDTH / 2, entityHeight, PLAYER_WIDTH / 2)
-    if (aabbCollide(arrowMin, arrowMax, targetMin, targetMax)) {
-      return { missDist: 0, impactPos: aPos.clone(), flightTicks: i + 1 }
-    }
-    const dx = Math.max(0, Math.abs(aPos.x - tPos.x) - (ARROW_SIZE / 2 + PLAYER_WIDTH / 2))
-    const dy = Math.max(
-      0,
-      Math.abs(aPos.y - (tPos.y + entityHeight / 2)) - (ARROW_SIZE / 2 + entityHeight / 2),
-    )
-    const dz = Math.max(0, Math.abs(aPos.z - tPos.z) - (ARROW_SIZE / 2 + PLAYER_WIDTH / 2))
-    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
-    if (dist < minDist) {
-      minDist = dist
-      bestImpact = aPos.clone()
-      bestTicks = i + 1
+function closestApproachTick(pts: ArrowPoint[], target: Vec3): { tick: number; dist: number } {
+  let bestTick = 1
+  let bestDist = Infinity
+  for (const pt of pts) {
+    const d = pt.pos.distanceTo(target)
+    if (d < bestDist) {
+      bestDist = d
+      bestTick = pt.tick
     }
   }
-  return { missDist: minDist, impactPos: bestImpact, flightTicks: bestTicks }
+  return { tick: bestTick, dist: bestDist }
 }
 
-function solveOptimalAim(
+function solvePitchBisect(
   origin: Vec3,
-  targetStartPos: Vec3,
-  predictor: PreciseTargetPredictor,
+  targetCenter: Vec3,
+  yaw: number,
+  weaponName: string,
+): number | null {
+  const dx = targetCenter.x - origin.x
+  const dy = targetCenter.y - origin.y
+  const dz = targetCenter.z - origin.z
+  const hDist = Math.sqrt(dx * dx + dz * dz)
+
+  if (hDist < 0.001) {
+    return dy > 0 ? PITCH_MAX : PITCH_MIN
+  }
+
+  const evalVerticalAtHDist = (pitch: number): number | null => {
+    const pts = simulateArrow(origin, yaw, pitch, weaponName, 200)
+    let prevH = 0
+    let prevY = origin.y
+
+    for (const pt of pts) {
+      const ptdx = pt.pos.x - origin.x
+      const ptdz = pt.pos.z - origin.z
+      const h = Math.sqrt(ptdx * ptdx + ptdz * ptdz)
+      if (h >= hDist) {
+        const frac = prevH < hDist ? (hDist - prevH) / Math.max(h - prevH, 1e-9) : 0.5
+        return prevY + (pt.pos.y - prevY) * frac
+      }
+      prevH = h
+      prevY = pt.pos.y
+    }
+    return null
+  }
+
+  const hiVal = evalVerticalAtHDist(PITCH_MAX)
+  if (hiVal !== null && hiVal < dy) return null
+
+  const loVal = evalVerticalAtHDist(PITCH_MIN)
+  if (loVal !== null && loVal > dy) return null
+
+  let lo = PITCH_MIN
+  let hi = PITCH_MAX
+
+  for (let i = 0; i < PITCH_BISECT_ITER; i++) {
+    const mid = (lo + hi) * 0.5
+    const midVal = evalVerticalAtHDist(mid)
+    if (midVal === null) {
+      hi = mid
+      continue
+    }
+    if (Math.abs(midVal - dy) < 0.005) return mid
+    if (midVal < dy) lo = mid
+    else hi = mid
+  }
+
+  return (lo + hi) * 0.5
+}
+
+function predictTargetPosition(
+  currentPos: Vec3,
+  velPerTick: Vec3,
+  entityHeight: number,
+  ticks: number,
+  bot: Bot,
+): Vec3 {
+  const pos = currentPos.clone()
+  const vel = velPerTick.clone()
+
+  for (let i = 0; i < ticks; i++) {
+    const blockBelow = bot.blockAt(pos.offset(0, -0.1, 0))
+    const onGround = (blockBelow !== null && blockBelow.name !== 'air') && pos.y <= Math.floor(pos.y) + 0.3 && vel.y <= 0
+
+    if (onGround) {
+      vel.x *= 0.6
+      vel.z *= 0.6
+      vel.y = 0
+      if (Math.abs(vel.x) < 0.005) vel.x = 0
+      if (Math.abs(vel.z) < 0.005) vel.z = 0
+    } else {
+      vel.y -= 0.08
+      vel.y *= 0.98
+    }
+
+    pos.x += vel.x
+    pos.y += vel.y
+    pos.z += vel.z
+  }
+
+  return pos.offset(0, entityHeight * 0.5, 0)
+}
+
+function solveIterativeIntercept(
+  origin: Vec3,
+  currentTargetPos: Vec3,
+  targetVelPerTick: Vec3,
   entityHeight: number,
   weaponName: string,
   bot: Bot,
-): { aim: SolvedAim; expectedMiss: number } | null {
-  const maxTicks = MAX_FLIGHT_TICKS
-  const futurePositions: Vec3[] = []
-  for (let t = 0; t <= maxTicks; t++) {
-    futurePositions.push(predictor.predictFuturePosition(t + LATENCY_TICKS + REACT_TICKS, bot))
+): { yaw: number; pitch: number; flightTicks: number; impactPos: Vec3 } | null {
+  const roughDist = currentTargetPos.distanceTo(origin)
+  let estimatedTicks = Math.max(4, Math.round(roughDist / 2.5) + LATENCY_TICKS)
+
+  let finalYaw = 0
+  let finalPitch = 0
+  let finalTicks = estimatedTicks
+  let finalImpact = currentTargetPos.clone()
+
+  for (let iter = 0; iter < INTERCEPT_MAX_ITER; iter++) {
+    const predictedCenter = predictTargetPosition(
+      currentTargetPos,
+      targetVelPerTick,
+      entityHeight,
+      estimatedTicks + LATENCY_TICKS,
+      bot,
+    )
+
+    const dx = predictedCenter.x - origin.x
+    const dz = predictedCenter.z - origin.z
+    const yaw = Math.atan2(dx, dz) + Math.PI
+
+    const pitch = solvePitchBisect(origin, predictedCenter, yaw, weaponName)
+    if (pitch === null) return null
+
+    const pts = simulateArrow(origin, yaw, pitch, weaponName, 200)
+    const { tick: closestTick } = closestApproachTick(pts, predictedCenter)
+
+    const prevTicks = estimatedTicks
+    estimatedTicks = closestTick
+
+    finalYaw = yaw
+    finalPitch = pitch
+    finalTicks = closestTick
+    finalImpact = pts[closestTick - 1]?.pos ?? predictedCenter
+
+    if (Math.abs(estimatedTicks - prevTicks) < 1) break
   }
 
-  const costFunc = (yaw: number, pitch: number) => {
-    return computeMissDistance(yaw, pitch, origin, futurePositions, entityHeight, weaponName)
-      .missDist
-  }
-
-  const roughDist = targetStartPos.distanceTo(origin)
-  const roughTicks = Math.floor(roughDist / 3.0) + 8
-  const initTarget = futurePositions[roughTicks]!.offset(0, entityHeight * 0.5, 0)
-  const dx = initTarget.x - origin.x
-  const dz = initTarget.z - origin.z
-  const initYaw = Math.atan2(-dx, dz)
-
-  let bestYaw = initYaw
-  let bestPitch = 0
-  let bestCost = Infinity
-
-  const yawRange = 0.8
-  for (let i = 0; i < OPT_GRID_STEPS; i++) {
-    const yaw = initYaw - yawRange + (2 * yawRange * i) / (OPT_GRID_STEPS - 1)
-    for (let j = 0; j < OPT_GRID_STEPS; j++) {
-      const pitch = PITCH_LOWER + ((PITCH_UPPER - PITCH_LOWER) * j) / (OPT_GRID_STEPS - 1)
-      const c = costFunc(yaw, pitch)
-      if (c < bestCost) {
-        bestCost = c
-        bestYaw = yaw
-        bestPitch = pitch
-      }
-    }
-  }
-
-  const simplex = (
-    f: (x: number, y: number) => number,
-    x0: number,
-    y0: number,
-    step: number,
-    maxIter: number,
-    tol: number,
-  ) => {
-    const points = [
-      { x: x0, y: y0, fx: f(x0, y0) },
-      { x: x0 + step, y: y0, fx: f(x0 + step, y0) },
-      { x: x0, y: y0 + step, fx: f(x0, y0 + step) },
-    ]
-    const alpha = 1,
-      gamma = 2,
-      rho = 0.5,
-      sigma = 0.5
-    for (let iter = 0; iter < maxIter; iter++) {
-      points.sort((a, b) => a.fx - b.fx)
-      const best = points[0]!,
-        good = points[1]!,
-        worst = points[2]!
-      const range = Math.abs(best.fx - worst.fx)
-      if (range < tol) break
-      const xc = (best.x + good.x) / 2
-      const yc = (best.y + good.y) / 2
-      const xr = xc + alpha * (xc - worst.x)
-      const yr = yc + alpha * (yc - worst.y)
-      const fxr = f(xr, yr)
-      if (fxr < best.fx) {
-        const xe = xc + gamma * (xr - xc)
-        const ye = yc + gamma * (yr - yc)
-        const fxe = f(xe, ye)
-        points[2] = fxe < fxr ? { x: xe, y: ye, fx: fxe } : { x: xr, y: yr, fx: fxr }
-      } else if (fxr < worst.fx) {
-        points[2] = { x: xr, y: yr, fx: fxr }
-      } else {
-        const xcon = xc + rho * (worst.x - xc)
-        const ycon = yc + rho * (worst.y - yc)
-        const fxcon = f(xcon, ycon)
-        if (fxcon < worst.fx) {
-          points[2] = { x: xcon, y: ycon, fx: fxcon }
-        } else {
-          points[1] = {
-            x: best.x + sigma * (good.x - best.x),
-            y: best.y + sigma * (good.y - best.y),
-            fx: f(best.x + sigma * (good.x - best.x), best.y + sigma * (good.y - best.y)),
-          }
-          points[2] = {
-            x: best.x + sigma * (worst.x - best.x),
-            y: best.y + sigma * (worst.y - best.y),
-            fx: f(best.x + sigma * (worst.x - best.x), best.y + sigma * (worst.y - best.y)),
-          }
-        }
-      }
-    }
-    points.sort((a, b) => a.fx - b.fx)
-    return points[0]!
-  }
-
-  const refined = simplex(costFunc, bestYaw, bestPitch, 0.05, OPT_NM_ITER, OPT_NM_TOL)
-  let finalYaw = refined.x
-  let finalPitch = refined.y
-  let finalCost = refined.fx
-
-  for (let iter = 0; iter < OPT_LOCAL_STEPS; iter++) {
-    const step = 0.005 / (iter + 1)
-    const candidates: Array<[number, number]> = [
-      [finalYaw, finalPitch],
-      [finalYaw + step, finalPitch],
-      [finalYaw - step, finalPitch],
-      [finalYaw, finalPitch + step],
-      [finalYaw, finalPitch - step],
-    ]
-    for (const [y, p] of candidates) {
-      const clampedPitch = Math.min(PITCH_UPPER, Math.max(PITCH_LOWER, p))
-      const c = costFunc(y, clampedPitch)
-      if (c < finalCost) {
-        finalCost = c
-        finalYaw = y
-        finalPitch = clampedPitch
-      }
-    }
-  }
-
-  const finalRes = computeMissDistance(
-    finalYaw,
-    finalPitch,
-    origin,
-    futurePositions,
-    entityHeight,
-    weaponName,
-  )
   return {
-    aim: {
-      yaw: finalYaw,
-      pitch: finalPitch,
-      flightTicks: finalRes.flightTicks,
-      impactPosition: finalRes.impactPos,
-    },
-    expectedMiss: finalRes.missDist,
+    yaw: finalYaw,
+    pitch: Math.max(PITCH_MIN, Math.min(PITCH_MAX, finalPitch)),
+    flightTicks: finalTicks,
+    impactPos: finalImpact,
   }
 }
 
-function detectBridgeInfo(bot: Bot, target: Entity): { edgeDir: Vec3; bridgeAxis: Vec3 } | null {
+function validateShotWithFactory(
+  bot: Bot,
+  origin: Vec3,
+  yaw: number,
+  pitch: number,
+  target: Entity,
+  interceptFunctions: InterceptFunctions,
+  weaponName: string,
+): BasicShotInfo | null {
+  const shot = ShotFactory.fromPlayer(
+    {
+      position: origin.offset(0, -1.62, 0),
+      yaw,
+      pitch,
+      velocity: bot.entity.velocity,
+      onGround: bot.entity.onGround,
+    },
+    interceptFunctions,
+    weaponName,
+  )
+  const result = shot.hitsEntity(
+    { position: target.position, height: target.height, width: target.width ?? PLAYER_WIDTH },
+    { yawChecked: false, blockCheck: false },
+  )
+  return result?.shotInfo ?? null
+}
+
+function detectBridgeInfo(bot: Bot, target: Entity): { edgeDir: Vec3 } | null {
   const tp = target.position
   let bestDir: Vec3 | null = null
   let bestDrop = 0
+
   for (let angle = 0; angle < 2 * Math.PI; angle += Math.PI / 8) {
     const dir = new Vec3(Math.cos(angle), 0, Math.sin(angle))
     let drop = 0
@@ -439,17 +353,17 @@ function detectBridgeInfo(bot: Bot, target: Entity): { edgeDir: Vec3; bridgeAxis
     }
     if (drop > bestDrop) {
       bestDrop = drop
-      bestDir = dir
+      bestDir = dir.clone()
     }
   }
-  if (bestDrop < 3) return null
-  const perp = new Vec3(-bestDir!.z, 0, bestDir!.x)
-  return { edgeDir: bestDir!, bridgeAxis: perp }
+
+  return bestDrop >= 3 && bestDir !== null ? { edgeDir: bestDir } : null
 }
 
 export class BowAiming {
-  private readonly predictor = new PreciseTargetPredictor()
-  private tick = 0
+  private readonly velTracker = new TickVelocityTracker()
+  private intercept: InterceptFunctions | null = null
+  private currentTick = 0
   private lastTargetId: number | null = null
   private pendingShot: {
     target: Entity
@@ -457,71 +371,141 @@ export class BowAiming {
     expectedMiss: number
     weaponName: string
     knockbackDir?: Vec3
-    shotTick: number
   } | null = null
 
   constructor(private readonly config: BowConfig) {}
 
+  private getIntercept(bot: Bot): InterceptFunctions {
+    if (this.intercept === null) {
+      this.intercept = new InterceptFunctions(bot)
+    }
+    return this.intercept
+  }
+
   compute(bot: Bot, target: Entity, weaponName: string): AimResult | null {
-    this.tick++
-    const now = performance.now()
+    this.currentTick++
+
     if (this.lastTargetId !== target.id) {
-      this.predictor.reset()
+      this.velTracker.reset()
       this.lastTargetId = target.id
     }
-    this.predictor.record(target.position.clone(), now, this.tick)
+
+    this.velTracker.recordTick(target.position.clone(), this.currentTick)
 
     const eyePos = bot.entity.position.offset(0, 1.62, 0)
-    let targetPos = target.position.clone()
+    const velPerTick = this.velTracker.getVelocityPerTick()
+
+    let aimTargetPos = target.position.clone()
     let knockbackDir: Vec3 | undefined = undefined
+
     if (this.config.bridgeKnockbackEnabled) {
       const bridgeInfo = detectBridgeInfo(bot, target)
-      if (bridgeInfo) {
+      if (bridgeInfo !== null) {
         knockbackDir = bridgeInfo.edgeDir
-        targetPos = targetPos.plus(bridgeInfo.edgeDir.scaled(0.7))
+        aimTargetPos = aimTargetPos.plus(bridgeInfo.edgeDir.scaled(0.7))
       }
     }
 
-    const solution = solveOptimalAim(
+    debugLog('Computing aim', {
+      tick: this.currentTick,
+      targetId: target.id,
+      targetPos: aimTargetPos.toString(),
+      eyePos: eyePos.toString(),
+      weapon: weaponName,
+    })
+
+    debugLog('Target velocity per tick', {
+      velocity: velPerTick.toString(),
+    })
+
+    const intercept = solveIterativeIntercept(
       eyePos,
-      targetPos,
-      this.predictor,
+      aimTargetPos,
+      velPerTick,
       target.height,
       weaponName,
       bot,
     )
-    if (!solution) return null
+
+    if (intercept === null) return null
+
+    const expectedMiss = this.computeMissDistance(
+      intercept,
+      eyePos,
+      aimTargetPos,
+      velPerTick,
+      target.height,
+      weaponName,
+      bot,
+    )
+
+    debugLog('Aim solution', {
+      yaw: intercept.yaw,
+      pitch: intercept.pitch,
+      flightTicks: intercept.flightTicks,
+      impactPos: intercept.impactPos.toString(),
+      expectedMiss,
+    })
+
+    const solvedAim: SolvedAim = {
+      yaw: intercept.yaw,
+      pitch: intercept.pitch,
+      flightTicks: intercept.flightTicks,
+      impactPosition: intercept.impactPos,
+    }
 
     this.pendingShot = {
       target,
-      predictedAim: solution.aim,
-      expectedMiss: solution.expectedMiss,
+      predictedAim: solvedAim,
+      expectedMiss,
       weaponName,
-      ...(knockbackDir ? { knockbackDir } : {}),
-      shotTick: this.tick,
+      ...(knockbackDir !== undefined ? { knockbackDir } : {}),
     }
 
-    debugLog('Aim computed', {
-      yaw: solution.aim.yaw,
-      pitch: solution.aim.pitch,
-      expectedMiss: solution.expectedMiss,
-      flightTicks: solution.aim.flightTicks,
-    })
-
     return {
-      ...solution.aim,
+      ...solvedAim,
       weaponName,
-      ...(knockbackDir ? { knockbackDir } : {}),
+      ...(knockbackDir !== undefined ? { knockbackDir } : {}),
     }
   }
 
+  private computeMissDistance(
+    intercept: { yaw: number; pitch: number; flightTicks: number; impactPos: Vec3 },
+    origin: Vec3,
+    targetCurrentPos: Vec3,
+    velPerTick: Vec3,
+    entityHeight: number,
+    weaponName: string,
+    bot: Bot,
+  ): number {
+    const predictedCenter = predictTargetPosition(
+      targetCurrentPos,
+      velPerTick,
+      entityHeight,
+      intercept.flightTicks + LATENCY_TICKS,
+      bot,
+    )
+
+    const arrowPts = simulateArrow(origin, intercept.yaw, intercept.pitch, weaponName, intercept.flightTicks)
+    const arrowPos = arrowPts[arrowPts.length - 1]?.pos ?? intercept.impactPos
+
+    const hw = PLAYER_WIDTH / 2
+    const dx = Math.max(0, Math.abs(arrowPos.x - predictedCenter.x) - hw)
+    const dz = Math.max(0, Math.abs(arrowPos.z - predictedCenter.z) - hw)
+    const dy = Math.max(0, Math.abs(arrowPos.y - predictedCenter.y) - entityHeight / 2)
+
+    return Math.sqrt(dx * dx + dy * dy + dz * dz)
+  }
+
   recordShotResult(hit: boolean, actualImpactTick?: number): void {
-    if (!this.pendingShot) return
+    if (this.pendingShot === null) return
+
     const { target, predictedAim, expectedMiss, knockbackDir } = this.pendingShot
     const actualPos = target.position.clone()
-    const actualVel = this.predictor.getEstimatedVelocity()
+    const actualVel = this.velTracker.getVelocityPerTick()
     const actualMissDist = hit ? 0 : actualPos.distanceTo(predictedAim.impactPosition)
-    const debugInfo: ShotDebugInfo = {
+
+    const entry: ShotDebugInfo = {
       timestamp: Date.now(),
       targetId: target.id,
       predictedYaw: predictedAim.yaw,
@@ -530,28 +514,25 @@ export class BowAiming {
       predictedImpactPos: predictedAim.impactPosition.clone(),
       expectedMissDist: expectedMiss,
       actualHit: hit,
-      actualMissDist: actualMissDist,
+      actualMissDist,
       actualImpactTick: actualImpactTick ?? predictedAim.flightTicks,
       actualTargetPosAtImpact: actualPos,
       targetVelocity: actualVel,
-      regime: 'interpolated',
+      regime: 'iterative-intercept',
       scenariosUsed: 1,
-      ...(knockbackDir ? { knockbackDir: knockbackDir.clone() } : {}),
+      ...(knockbackDir !== undefined ? { knockbackDir: knockbackDir.clone() } : {}),
     }
-    shotHistory.push(debugInfo)
+
+    shotHistory.push(entry)
     if (shotHistory.length > MAX_HISTORY) shotHistory.shift()
-    debugLog('Shot result recorded', {
-      hit,
-      expectedMiss,
-      actualMiss: actualMissDist,
-      targetId: target.id,
-    })
+
     this.pendingShot = null
   }
 
   reset(): void {
-    this.predictor.reset()
+    this.velTracker.reset()
     this.lastTargetId = null
     this.pendingShot = null
+    this.intercept = null
   }
 }
