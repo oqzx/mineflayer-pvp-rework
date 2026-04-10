@@ -29,5 +29,8 @@ export class EngagingBehavior extends StateBehavior {
     return false
   }
 
-  onStateExited(): void {}
+  onStateExited(): void {
+    const d = this.data as PvpData
+    d.sword.stop()
+  }
 }

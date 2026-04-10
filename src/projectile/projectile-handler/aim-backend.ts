@@ -2,7 +2,7 @@ import type { Bot } from 'mineflayer'
 import type { Entity } from 'prismarine-entity'
 import type { Vec3 } from 'vec3'
 import type { BowConfig } from '../../config/types.js'
-import { BowAiming } from './bow-aiming.js'
+import { BowAiming, enableDebugLogging } from './bow-aiming.js'
 import { type CheckedShot, ShotPlanner } from './shot-planner.js'
 
 export type ProjectileAimResult = {
@@ -38,6 +38,7 @@ class BowAimingBackend implements ProjectileAimBackend {
     bowConfig: BowConfig,
   ) {
     this.aiming = new BowAiming(bowConfig)
+    enableDebugLogging(true)
   }
 
   compute(target: Entity, weapon: string): ProjectileAimResult | null {

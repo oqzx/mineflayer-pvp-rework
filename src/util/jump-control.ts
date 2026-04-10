@@ -37,6 +37,9 @@ function installJumpTracker(bot: BotWithPatchedJump): JumpTracker {
     original(state, value)
   }) as typeof bot.setControlState
 
+  const currentMax = bot.getMaxListeners()
+  if (currentMax !== 0) bot.setMaxListeners(currentMax + 1)
+
   bot.on('physicsTick', () => {
     tracker.tickCounter++
     if (tracker.releaseAtTick === null || tracker.tickCounter < tracker.releaseAtTick) return

@@ -61,7 +61,7 @@ export class BowPVP {
     const resolvedBowConfig: BowConfig = bowConfig ?? {
       enabled: true,
       preferOverFireball: true,
-      aimBackend: 'shot-planner',
+      aimBackend: 'bow-aiming',
       leadIterations: 8,
       bridgeKnockbackEnabled: true,
     }
@@ -73,7 +73,6 @@ export class BowPVP {
     this.bot.on('entityGone', (e) => {
       if (e === this.target) void this.stop()
     })
-    // this.intercepter = new InterceptEquations(bot);
   }
 
   public isActive(): boolean {
@@ -140,43 +139,16 @@ export class BowPVP {
     return this.bot.tracker.getEntitySpeed(entity) || new Vec3(0, 0, 0)
   }
 
-  /**
-   *
-   * @param entity
-   * @param velocity
-   * @returns
-   */
   public shotToEntity(entity: Entity, velocity?: Vec3, weapon: RangedWeapon = this.weapon) {
     if (!velocity) velocity = this.getVelocity(entity)
     return this.aimer.compute(entity, weapon, velocity)
   }
 
-  /**
-   * @function hasWeapon
-   * @param {string} weapon
-   * @returns
-   */
   public hasWeapon(weapon?: string): boolean {
     weapon ??= this.weapon
     return !!this.bot.util.inv.getAllItems().find((item) => weapon && item.name.includes(weapon))
   }
 
-  /**
-   * @function hasAmmo
-   * @param   {string} [weapon=this.weapon] Optional string name of a weapon. Defaults to this.weapon.
-   * @returns {boolean} If the weapon has ammo or not.
-   *
-   * ### Usage:
-   * ```ts
-   * // Let us fire!
-   * let doWeHaveAmmo = bot.bowpvp.hasAmmo();
-   * if (doWeHaveAmmo) {
-   * ‍    console.log("cool.")
-   * } else {
-   * ‍    ocnsole.log("not cool.")
-   * }
-   * ```
-   */
   public hasAmmo(weapon?: string): boolean {
     weapon ??= this.weapon
     switch (weapon) {
@@ -204,23 +176,6 @@ export class BowPVP {
     return await this.checkForWeapon(itemStr)
   }
 
-  /**
-     * @function checkForWeapon
-     * Checks to see if a weapon exists
-     * @param {string} weapon A string name of a weapon to check for
-     * @returns {Promise<boolean>} A promise with a boolean
-     * 
-     * ### Usage:
-     * ```ts
-        // Check for our weapon
-        let doWeHaveABow = await bot.bowpvp.checkForWeapon("bow");
-        if (doWeHaveABow) {
-        ‍    console.log("We have a bow.")
-        } else {
-        ‍    console.log("God damnit")
-        }
-        ```
-     */
   public async checkForWeapon(weapon?: string): Promise<boolean> {
     weapon ??= this.weapon
     const usedHand = this.bot.util.inv.getHandWithItem(this.useOffhand)
@@ -236,25 +191,12 @@ export class BowPVP {
     const weapon = this.bot.util.inv.getAllItems().find((item) => item.name.includes('crossbow'))
     if (!this.hasAmmo('crossbow_firework') || !weapon) return false
     this.useOffhand = false
-    // if (!this.bot.util.inv.getHandWithItem(true)?.name.includes("firework")) {
     const ammo = this.bot.util.inv.getAllItems().find((item) => item.name.includes('firework'))!
     await this.bot.util.inv.customEquip(ammo, this.bot.util.inv.getHand(!this.useOffhand))
     await this.bot.util.inv.customEquip(weapon, this.bot.util.inv.getHand(this.useOffhand))
     return true
-    // }
   }
 
-  /**
-   * @function stop
-   * @public
-   *
-   * ### Usage:
-   * ```ts
-   * // Stop with the bow!
-   * bot.bowpvp.stop()
-   * // That's better
-   * ```
-   */
   public async stop(): Promise<void> {
     this.engageRequestId++
     this.engagingTargetId = null
@@ -263,7 +205,6 @@ export class BowPVP {
     this.stopTrackingRotation()
     if (this.target) this.bot.tracker.stopTrackingEntity(this.target)
     if (this.shotCharging) {
-      // if (this.shotInfo) this.bot.look(this.shotInfo.yaw, this.shotInfo.pitch, true);
       if (this.shotInfo) await this.bot.look(this.shotInfo.yaw, this.shotInfo.pitch, true)
       this.bot.deactivateItem()
     }
@@ -275,22 +216,6 @@ export class BowPVP {
     this.enabled = false
   }
 
-  /**
-   * Attacks a specified target with a specified weapon.
-   * @function engage
-   * @public
-   * @param   {Entity} target An Entity object.
-   * @param   {string} [weapon=this.weapon] An optional string name of an item featured in the bots inventory.
-   * @return  {Promise<void>} An empty promise
-   *
-   * ### Usage:
-   * ```ts
-   * // Get our target
-   * target = bot.nearestEntity((e) => (e.username ?? e.name) === "test_player");
-   * // Start the attack!
-   * bot.newbowpvp.engage(target, "bow");
-   * ```
-   */
   public async engage(target: Entity, weapon?: RangedWeapon): Promise<void> {
     const targetId = target.id
 
@@ -326,13 +251,6 @@ export class BowPVP {
     this.startTrackingRotation()
   }
 
-  /**
-   *
-   * @param yaw
-   * @param grade
-   * @param weapon
-   * @returns
-   */
   public async shootAt(yaw?: number, grade?: number, weapon?: RangedWeapon) {
     if (this.shotCharging) return
     const hasWeapon = await this.checkForWeapon(weapon)
@@ -383,7 +301,7 @@ export class BowPVP {
       case 'crossbow':
       case 'crossbow_firework':
         const weaponHand = this.bot.util.inv.getHandWithItem(this.useOffhand)
-        if (!weaponHand) return console.log('cant find a thing')
+        if (!weaponHand) return
         const isEnchanted = weaponHand.enchants.find((enchant) => enchant.name === 'quick_charge')
         this.waitTime = 1250 - (isEnchanted ? isEnchanted.lvl : 0) * 250
         break
@@ -393,10 +311,6 @@ export class BowPVP {
 
     if (!this.shotCharging) {
       if (CHARGE_WEAPONS.has(this.weapon)) {
-        // Verify the correct ranged weapon is actually in hand before activating.
-        // If a sword or other melee item is still equipped (e.g. equip hasn't
-        // synced yet), skip this tick and re-equip; otherwise we'd "bow" with
-        // a sword which does nothing useful and wastes the action.
         const currentHand = this.bot.util.inv.getHandWithItem(this.useOffhand)
         if (!currentHand || !currentHand.name.includes(this.weapon)) {
           void this.checkForWeapon(this.weapon)
@@ -447,7 +361,6 @@ export class BowPVP {
   }
 
   private shootCrossbow() {
-    // console.log(this.crossbowLoading, this.shotReady, performance.now() - this.shotInit)
     if (this.crossbowLoading) {
       this.bot.activateItem(this.useOffhand)
       this.bot.deactivateItem()
