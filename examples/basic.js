@@ -45,14 +45,26 @@ bot.on("chat", (username, message) => {
 
 bot.on("physicsTick", () => {
   botTick += 1;
+  (bot).currentTick = botTick;
 });
 
 bot._client.on("packet", (data, meta) => {
   // console.log(`[tick ${botTick}]`, meta);
   // if (meta.name.includes("entity")) {
-  //   console.log(`[tick ${botTick}]`, bot.physicsCtx?.state, data);
+  //   console.log(`[tick ${botTick}]`, 'is us? ', bot.entity.id === data.entityId, 'data', data);
   // }
 });
+
+bot.on("entityHurt", (entity) => {
+  console.log(`[entityHurt:tick=${botTick}]`, getEntityName(entity));
+});
+
+bot.on("chat", (username, message) => {
+  if (username === bot.username) return;
+  console.log(`[chat:tick=${botTick}] <${username}> ${message}`);
+});
+
+
 
 bot.on("kicked", (reason) => console.log("[kicked]", reason));
 bot.on("error", (error) => console.log("[error]", error));

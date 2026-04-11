@@ -99,11 +99,14 @@ class TargetPredictor {
 }
 
 function getEntityVelocity(bot: Bot, entity: Entity): Vec3 {
-  return (
+  const trackerVel = (
     (
       bot as unknown as { tracker?: { getEntitySpeed(e: Entity): Vec3 | null } }
     ).tracker?.getEntitySpeed(entity) ?? new Vec3(0, 0, 0)
   )
+  // Tracker velocity is at entity-update frequency (~5 Hz), normalize to game-tick frequency (20 Hz)
+  // by dividing by 4 to get velocity per game tick
+  return trackerVel.scaled(0.25)
 }
 
 function detectBridgeOrEdge(bot: Bot, target: Entity): Vec3 | null {
