@@ -1,6 +1,6 @@
 import type { Bot } from 'mineflayer'
 import type { Entity } from 'prismarine-entity'
-import type { Vec3 } from 'vec3'
+import type { CurvaturePrediction } from '@nxg-org/mineflayer-tracker'
 import type { BowConfig } from '../../config/types.js'
 import { BowAiming } from './bow-aiming.js'
 import { type CheckedShot, ShotPlanner } from './shot-planner.js'
@@ -10,10 +10,20 @@ export type ProjectileAimResult = {
   yaw: number
   pitch: number
   ticks: number
+  confidence: number
 }
 
+export type ProjectilePredictionProvider = (
+  target: Entity,
+  ticks: number,
+) => CurvaturePrediction | null
+
 export interface ProjectileAimBackend {
-  compute(target: Entity, weapon: string, velocity: Vec3): ProjectileAimResult | null
+  compute(
+    target: Entity,
+    weapon: string,
+    predictionProvider?: ProjectilePredictionProvider,
+  ): ProjectileAimResult | null
 }
 
 class ShotPlannerBackend implements ProjectileAimBackend {
@@ -23,9 +33,13 @@ class ShotPlannerBackend implements ProjectileAimBackend {
     this.planner = new ShotPlanner(bot)
   }
 
-  compute(target: Entity, weapon: string, velocity: Vec3): ProjectileAimResult | null {
+  compute(
+    target: Entity,
+    weapon: string,
+    predictionProvider?: ProjectilePredictionProvider,
+  ): ProjectileAimResult | null {
     this.planner.weapon = weapon
-    const shot = this.planner.shotToEntity(target, velocity)
+    const shot = this.planner.shotToEntity(target, -Math.PI / 2, predictionProvider)
     return normalizePlannerShot(shot)
   }
 }
@@ -40,7 +54,11 @@ class BowAimingBackend implements ProjectileAimBackend {
     this.aiming = new BowAiming(bowConfig)
   }
 
-  compute(target: Entity, weapon: string): ProjectileAimResult | null {
+  compute(
+    target: Entity,
+    weapon: string,
+    _predictionProvider?: ProjectilePredictionProvider,
+  ): ProjectileAimResult | null {
     const shot = this.aiming.compute(this.bot, target, weapon)
     if (!shot) return null
 
@@ -49,6 +67,7 @@ class BowAimingBackend implements ProjectileAimBackend {
       yaw: shot.yaw,
       pitch: shot.pitch,
       ticks: shot.flightTicks,
+      confidence: 1,
     }
   }
 }
@@ -61,6 +80,7 @@ function normalizePlannerShot(shot: CheckedShot | null): ProjectileAimResult | n
     yaw: shot.yaw,
     pitch: shot.pitch,
     ticks: shot.ticks,
+    confidence: shot.confidence,
   }
 }
 

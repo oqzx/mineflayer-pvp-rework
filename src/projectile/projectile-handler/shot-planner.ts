@@ -6,10 +6,13 @@ import {
   InterceptFunctions,
 } from '@nxg-org/mineflayer-trajectories'
 import { getTargetYaw } from '../../calc/math'
+import { trajectoryInfo } from '../../calc/constants'
 import { Vec3 } from 'vec3'
 import { AABBUtils } from '@nxg-org/mineflayer-util-plugin'
+import type { Entity } from 'prismarine-entity'
+import type { CurvaturePrediction } from '@nxg-org/mineflayer-tracker'
+import type { ProjectilePredictionProvider } from './aim-backend.js'
 
-const emptyVec = new Vec3(0, 0, 0)
 const dv = Math.PI / 360
 const PIOver2 = Math.PI / 2
 const PIOver3 = Math.PI / 3
@@ -21,14 +24,97 @@ export type CheckedShot = {
   yaw: number
   pitch: number
   ticks: number
+  confidence: number
   shotInfo: BasicShotInfo | null
 }
+
+type MovementSnapshot = {
+  previous: Vec3 | null
+  current: Vec3
+}
+
 export class ShotPlanner {
   public weapon: string = 'bow'
   private intercepter: InterceptFunctions
+  private readonly recentMovement = new Map<number, MovementSnapshot>()
+  private readonly lastLoggedPredictionTick = new Map<number, number>()
   constructor(private bot: Bot) {
     this.intercepter = new InterceptFunctions(bot)
+    this.bot.on('entityMoved', this.trackEntityMovement)
   }
+
+  private readonly trackEntityMovement = (entity: Entity): void => {
+    const current = entity.position.clone()
+    const snapshot = this.recentMovement.get(entity.id)
+    this.recentMovement.set(entity.id, {
+      previous: snapshot?.current ?? null,
+      current,
+    })
+  }
+
+  private getLaunchSpeed(): number {
+    return trajectoryInfo[this.weapon]?.v0 ?? 3
+  }
+
+  private getCompensatedYaw(targetPos: Vec3): number {
+    const botPos = this.bot.entity.position
+    const directYaw = getTargetYaw(botPos, targetPos)
+    const deltaX = targetPos.x - botPos.x
+    const deltaZ = targetPos.z - botPos.z
+    const horizontalDistance = Math.hypot(deltaX, deltaZ)
+    if (horizontalDistance === 0) return directYaw
+
+    const targetDirX = deltaX / horizontalDistance
+    const targetDirZ = deltaZ / horizontalDistance
+    const originVelX = this.bot.entity.velocity.x
+    const originVelZ = this.bot.entity.velocity.z
+    const dot = targetDirX * originVelX + targetDirZ * originVelZ
+    const originHorizontalSpeedSq = originVelX * originVelX + originVelZ * originVelZ
+    const launchSpeed = this.getLaunchSpeed()
+    const discriminant = dot * dot + launchSpeed * launchSpeed - originHorizontalSpeedSq
+    if (discriminant <= 0) return directYaw
+
+    const alignedSpeed = dot + Math.sqrt(discriminant)
+    const aimX = alignedSpeed * targetDirX - originVelX
+    const aimZ = alignedSpeed * targetDirZ - originVelZ
+    if (aimX === 0 && aimZ === 0) return directYaw
+
+    return getTargetYaw(new Vec3(0, 0, 0), new Vec3(aimX, 0, aimZ))
+  }
+
+  private getYawDegrees(yaw: number): string {
+    return ((yaw * 180) / Math.PI).toFixed(1)
+  }
+
+  private getRelativeMovementSummary(targetPos: Vec3, movementDelta: Vec3 | null): string {
+    if (!movementDelta) return 'null'
+
+    const toTarget = targetPos.minus(this.bot.entity.position)
+    const planarDistance = Math.hypot(toTarget.x, toTarget.z)
+    const movementMagnitude = Math.hypot(movementDelta.x, movementDelta.z)
+    if (planarDistance === 0 || movementMagnitude === 0) {
+      return `move=(${movementDelta.x.toFixed(3)}, ${movementDelta.z.toFixed(3)}) radial=0.000 tangential=0.000 angleDeg=0.0`
+    }
+
+    const radialX = toTarget.x / planarDistance
+    const radialZ = toTarget.z / planarDistance
+    const tangentX = -radialZ
+    const tangentZ = radialX
+    const radial = movementDelta.x * radialX + movementDelta.z * radialZ
+    const tangential = movementDelta.x * tangentX + movementDelta.z * tangentZ
+    const cosine = Math.max(
+      -1,
+      Math.min(1, radial / movementMagnitude),
+    )
+    const angleDeg = (Math.acos(cosine) * 180) / Math.PI
+
+    return (
+      `move=(${movementDelta.x.toFixed(3)}, ${movementDelta.z.toFixed(3)}) ` +
+      `radial=${radial.toFixed(3)} tangential=${tangential.toFixed(3)} angleDeg=${angleDeg.toFixed(1)}`
+    )
+  }
+
+
 
   private isShotValid(shotInfo1: CheckedShot | BasicShotInfo, target: Vec3, pitch: number) {
     let shotInfo = (shotInfo1 as CheckedShot).shotInfo
@@ -49,50 +135,58 @@ export class ShotPlanner {
    * Note: The increased cost comes from the increased checks made (1440 vs 100). This will be fixed.
    *
    * @param target
-   * @param avgSpeed
    * @param pitch
    * @returns {CheckedShot} the shot.
    */
   shotToEntity(
-    target: AABBComponents,
-    avgSpeed: Vec3 = emptyVec,
+    target: Entity,
     pitch: number = -PIOver2,
+    predictionProvider?: ProjectilePredictionProvider,
   ): CheckedShot | null {
-    const yaw = getTargetYaw(this.bot.entity.position, target.position)
+    const yaw = this.getCompensatedYaw(target.position)
     while (pitch < PIOver2) {
       const initInfo = this.getNextShot(target, yaw, pitch)
       pitch = initInfo.pitch
-      if (avgSpeed.equals(emptyVec)) {
-        const correctShot = this.checkForBlockIntercepts(target, initInfo)
-        if (this.isShotValid(correctShot, target.position, pitch)) return correctShot
-        const yawShot = this.getAlternativeYawShots(target, initInfo)
-        if (this.isShotValid(yawShot, target.position, pitch)) return yawShot
-      } else {
-        const newInfo = this.shiftTargetPositions(target, avgSpeed, initInfo)
-        for (const i of newInfo) {
-          const correctShot = this.checkForBlockIntercepts(i.target, ...i.info)
-          if (!correctShot.shotInfo) continue
-          if (this.isShotValid(correctShot, i.target.position, pitch)) return correctShot
-          const yawShot = this.getAlternativeYawShots(i.target, initInfo)
-          if (this.isShotValid(yawShot, i.target.position, pitch)) return yawShot
-        }
+      const newInfo = this.shiftTargetPositions(target, predictionProvider, initInfo)
+      for (const i of newInfo) {
+        const correctShot = this.checkForBlockIntercepts(i.target, ...i.info)
+        if (!correctShot.shotInfo) continue
+        correctShot.confidence = i.confidence
+        if (this.isShotValid(correctShot, i.target.position, pitch)) return correctShot
+        const yawShot = this.getAlternativeYawShots(i.target, initInfo)
+        yawShot.confidence = i.confidence
+        if (this.isShotValid(yawShot, i.target.position, pitch)) return yawShot
       }
     }
     return null
   }
 
   private shiftTargetPositions(
-    target: AABBComponents,
-    avgSpeed: Vec3,
+    target: Entity,
+    predictionProvider?: ProjectilePredictionProvider,
     ...shotInfo: CheckShotInfo[]
   ) {
-    avgSpeed.y = 0
-    const newInfo = shotInfo.map((i) =>
-      i.shift ? target.position.clone().add(avgSpeed.scaled(i.ticks + 4)) : target.position,
-    ) //weird monkey patch.
-    const allInfo: { target: AABBComponents; info: CheckShotInfo[] }[] = []
-    for (const position of newInfo) {
-      const yaw = getTargetYaw(this.bot.entity.position, position)
+    const tickoffset = 0
+    const newInfo: { position: Vec3; confidence: number }[] = shotInfo.map((i, index) => {
+      const ticks = i.ticks + tickoffset
+      if (index === 0) this.bot.tracker.debugReplayLogging = true
+      else this.bot.tracker.debugReplayLogging = false
+      // this.bot.tracker.debugReplayLogging = false
+      const predict =
+        predictionProvider?.(target, ticks) ??
+        this.bot.tracker.predictEntityPositionWithConfidence(target, ticks)
+      const startTick = (this.bot as any).currentTick
+      if (index === 0) {
+        this.bot.tracker.logActualTargetPositionAfterTicks(target, ticks, predict, startTick)
+      }
+      if (predict) return { position: predict.position.clone(), confidence: predict.confidence }
+      return { position: target.position.clone(), confidence: 0 }
+    })
+
+    const allInfo: { target: AABBComponents; info: CheckShotInfo[]; confidence: number }[] = []
+    for (const itemInfo of newInfo) {
+      const position = itemInfo.position
+      const yaw = this.getCompensatedYaw(position)
       const item: AABBComponents = { position, height: target.height }
       if (target.width) item.width = target.width
 
@@ -100,7 +194,7 @@ export class ShotPlanner {
       const info = res.map((i) => {
         return { yaw, pitch: i.pitch, ticks: i.ticks }
       })
-      allInfo.push({ target: item, info })
+      allInfo.push({ target: item, info, confidence: itemInfo.confidence })
     }
     return allInfo
   }
@@ -120,9 +214,9 @@ export class ShotPlanner {
       )
       const shot = initShot.hitsEntity(target, { yawChecked: false, blockCheck: true })?.shotInfo
       if (!!shot && this.isShotValid(shot, target.position, Number(pitch)))
-        return { hit: true, yaw, pitch: Number(pitch), ticks, shotInfo: shot }
+        return { hit: true, yaw, pitch: Number(pitch), ticks, confidence: 0, shotInfo: shot }
     }
-    return { hit: false, yaw: NaN, pitch: NaN, ticks: NaN, shotInfo: null }
+    return { hit: false, yaw: NaN, pitch: NaN, ticks: NaN, confidence: 0, shotInfo: null }
   }
 
   public getNextShot(
@@ -187,11 +281,11 @@ export class ShotPlanner {
         )
         const shot = initShot.hitsEntity(target, { yawChecked: false, blockCheck: true })?.shotInfo
         if (!!shot && (shot.intersectPos || (pitch > PIOver3 && shot.nearestDistance < 1))) {
-          return { hit: true, yaw, pitch, ticks: shot.totalTicks, shotInfo: shot }
+          return { hit: true, yaw, pitch, ticks: shot.totalTicks, confidence: 0, shotInfo: shot }
         }
       }
     }
-    return { hit: false, yaw: NaN, pitch: NaN, ticks: NaN, shotInfo: null }
+    return { hit: false, yaw: NaN, pitch: NaN, ticks: NaN, confidence: 0, shotInfo: null }
   }
 
   //TODO: This is too expensive. Will aim at offset off foot instead of calc'ing all hits and averaging.

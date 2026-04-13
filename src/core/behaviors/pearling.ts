@@ -54,7 +54,8 @@ export class PearlingBehavior extends StateBehavior {
       d.pearl.shouldThrowEscape(this.bot, d.entity)
     ) {
       await d.pearl.throwEscape(this.bot, d.entity)
-    } else if (d.entity && d.pearl.shouldThrowAggressive(this.bot, d.entity)) {
+    }
+    else if (d.entity && d.pearl.shouldThrowAggressive(this.bot, d.entity)) {
       await d.pearl.throwAggressive(this.bot, d.entity)
     }
 

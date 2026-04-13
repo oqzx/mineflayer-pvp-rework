@@ -25,6 +25,7 @@ function findSafeLandingBlock(
 ): Block | null {
   const origin = bot.entity.position
   const candidates: Block[] = []
+  const innerRadius = avoidPositions.length === 0 ? 0 : SAFE_LANDING_INNER_RADIUS
 
   for (let dx = -searchRadius; dx <= searchRadius; dx += 2) {
     for (let dz = -searchRadius; dz <= searchRadius; dz += 2) {
@@ -42,6 +43,7 @@ function findSafeLandingBlock(
   return (
     candidates
       .filter((block) =>
+        block.position.offset(0.5, 1, 0.5).distanceTo(origin) >= innerRadius &&
         avoidPositions.every((ap) => block.position.offset(0.5, 1, 0.5).distanceTo(ap) > 3),
       )
       .sort((a, b) => a.position.distanceTo(origin) - b.position.distanceTo(origin))[0] ?? null
@@ -85,8 +87,11 @@ type EscapeCandidate = {
 }
 
 const MIN_ESCAPE_TRIGGER_DISTANCE = 6
-const MIN_ESCAPE_LANDING_DISTANCE = 8
-const MIN_ESCAPE_DISTANCE_GAIN = 5
+const SAFE_LANDING_INNER_RADIUS = 8
+const ESCAPE_INNER_RADIUS = 24
+const ESCAPE_OUTER_RADIUS = 36
+const MIN_ESCAPE_LANDING_DISTANCE = ESCAPE_INNER_RADIUS
+const MIN_ESCAPE_DISTANCE_GAIN = 8
 const MAX_ESCAPE_SHOT_CHECKS = 8
 const ENDER_PEARL_DAMAGE = 5
 
@@ -327,11 +332,7 @@ export class PearlHandler {
     this.enemyPearlPredictions.delete(entityId)
   }
 
-  getPearlingPlanType(
-    bot: Bot,
-    target?: Entity,
-    lowHealth = false,
-  ): 'defensive' | 'escape' | 'aggressive' | null {
+  getPearlingPlanType(bot: Bot, target?: Entity, lowHealth = false): 'defensive' | 'escape' | 'aggressive' | null {
     if (this.getDefensiveLandingBlock(bot)) return 'defensive'
     if (lowHealth && target && this.getEscapePlan(bot, target)) return 'escape'
     if (target && this.getThrowHuntdownShot(bot, target)) return 'aggressive'
@@ -426,7 +427,7 @@ export class PearlHandler {
     const jitters = [-2, 0, 2]
     const candidates: EscapeCandidate[] = []
 
-    for (let dist = 8; dist <= 20; dist += 4) {
+    for (let dist = ESCAPE_INNER_RADIUS; dist <= ESCAPE_OUTER_RADIUS; dist += 4) {
       for (let yOff = 0; yOff <= 4; yOff++) {
         for (const xJitter of jitters) {
           for (const zJitter of jitters) {
@@ -450,10 +451,10 @@ export class PearlHandler {
 
             const alignment = awayDir.dot(landing.minus(botPos).normalize())
             const score =
-              enemyDistance * 2 +
-              botDistance +
-              distanceGain * 3 +
-              alignment * 4 -
+              enemyDistance * 3.5 +
+              botDistance * 1.5 +
+              distanceGain * 4 +
+              alignment * 5 -
               Math.abs(yOff) * 0.5 -
               (Math.abs(xJitter) + Math.abs(zJitter)) * 0.15
 

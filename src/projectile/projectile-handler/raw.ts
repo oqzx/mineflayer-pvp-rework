@@ -6,15 +6,16 @@ import type { BowConfig, FireballConfig } from '../../config/types.js'
 import {
   createProjectileAimBackend,
   type ProjectileAimBackend,
+  type ProjectilePredictionProvider,
   type ProjectileAimResult,
 } from './aim-backend.js'
 
-import { Vec3 } from 'vec3'
 const sleep = promisify(setTimeout)
 const AIM_EPSILON = 1e-2
 const CHARGE_WEAPONS = new Set(['bow', 'crossbow', 'crossbow_firework', 'trident'])
 const THROW_WEAPONS = new Set(['snowball', 'ender_pearl', 'egg', 'splash_potion'])
 const RANGED_PRIORITY = ['bow', 'crossbow', 'crossbow_firework'] as const
+const MIN_FIRE_CONFIDENCE = 0.01
 
 type RangedWeapon =
   | (typeof RANGED_PRIORITY)[number]
@@ -88,7 +89,7 @@ export class BowPVP {
     const weapon = this.getPreferredWeapon()
     if (!weapon) return false
 
-    const shot = this.shotToEntity(target, this.getVelocity(target), weapon)
+    const shot = this.shotToEntity(target, weapon)
     return !!shot?.hit
   }
 
@@ -136,19 +137,17 @@ export class BowPVP {
     this.bot.removeListener('move', this.trackSentRotation)
   }
 
-  private getVelocity(entity: Entity): Vec3 {
-    return this.bot.tracker.getEntitySpeed(entity) || new Vec3(0, 0, 0)
+  private readonly predictionProvider: ProjectilePredictionProvider = (target, ticks) => {
+    return this.bot.tracker.predictEntityPositionWithConfidence(target, ticks)
   }
 
   /**
    *
    * @param entity
-   * @param velocity
    * @returns
    */
-  public shotToEntity(entity: Entity, velocity?: Vec3, weapon: RangedWeapon = this.weapon) {
-    if (!velocity) velocity = this.getVelocity(entity)
-    return this.aimer.compute(entity, weapon, velocity)
+  public shotToEntity(entity: Entity, weapon: RangedWeapon = this.weapon) {
+    return this.aimer.compute(entity, weapon, this.predictionProvider)
   }
 
   /**
@@ -261,7 +260,10 @@ export class BowPVP {
     this.bot.removeListener('physicsTick', this.getShotInfo)
     this.bot.removeListener('physicsTick', this.chargeHandling)
     this.stopTrackingRotation()
-    if (this.target) this.bot.tracker.stopTrackingEntity(this.target)
+    if (this.target) {
+      this.bot.tracker.stopTrackingEntity(this.target)
+      this.bot.trackerOld.stopTrackingEntity(this.target)
+    }
     if (this.shotCharging) {
       // if (this.shotInfo) this.bot.look(this.shotInfo.yaw, this.shotInfo.pitch, true);
       if (this.shotInfo) await this.bot.look(this.shotInfo.yaw, this.shotInfo.pitch, true)
@@ -319,6 +321,7 @@ export class BowPVP {
     this.target = target
     this.engagingTargetId = null
     this.bot.tracker.trackEntity(target)
+    this.bot.trackerOld.trackEntity(target)
     this.bot.removeListener('physicsTick', this.getShotInfo)
     this.bot.removeListener('physicsTick', this.chargeHandling)
     this.bot.on('physicsTick', this.getShotInfo)
@@ -361,7 +364,7 @@ export class BowPVP {
 
   private getShotInfo = async () => {
     if (!this.enabled || !this.target) return
-    this.shotInfo = this.shotToEntity(this.target, this.getVelocity(this.target))
+    this.shotInfo = this.shotToEntity(this.target)
   }
 
   private chargeHandling = async () => {
@@ -393,36 +396,20 @@ export class BowPVP {
 
     if (!this.shotCharging) {
       if (CHARGE_WEAPONS.has(this.weapon)) {
-        // Verify the correct ranged weapon is actually in hand before activating.
-        // If a sword or other melee item is still equipped (e.g. equip hasn't
-        // synced yet), skip this tick and re-equip; otherwise we'd "bow" with
-        // a sword which does nothing useful and wastes the action.
-        const currentHand = this.bot.util.inv.getHandWithItem(this.useOffhand)
-        if (!currentHand || !currentHand.name.includes(this.weapon)) {
-          void this.checkForWeapon(this.weapon)
-          return
-        }
         this.bot.activateItem(this.useOffhand)
       }
       this.shotCharging = true
       this.shotInit = performance.now()
     }
 
-    const info = this.shotInfo
-    if (!info || !info.hit) return
-
-    void this.bot.look(info.yaw, info.pitch, true)
-
+    if (!this.shotInfo || !this.shotInfo.hit) return
+    if (this.shotInfo.confidence < MIN_FIRE_CONFIDENCE) return
     if (!this.shotReady || this.awaitingRelease) return
 
     this.awaitingRelease = true
     try {
-      const freshInfo = this.shotInfo
-      if (!freshInfo?.hit || !this.shotReady || !this.enabled || !this.shotCharging) return
-
-      await this.bot.look(freshInfo.yaw, freshInfo.pitch, true)
-
-      if (!this.enabled || !this.shotCharging || !this.shotReady) return
+      const aligned = await this.ensureLookedAt(this.shotInfo.yaw, this.shotInfo.pitch)
+      if (!aligned || !this.shotReady) return
 
       if (['bow', 'trident'].includes(this.weapon)) {
         this.bot.deactivateItem()
