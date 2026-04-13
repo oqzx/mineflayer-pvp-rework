@@ -16,6 +16,7 @@ export type EnemyPearlPrediction = {
   throwerId: number | null
   estimatedLandTick: number
   estimatedLandPos: Vec3
+  estimatedDurationTicks: number
 }
 
 function findSafeLandingBlock(
@@ -316,6 +317,7 @@ export class PearlHandler {
       pearlEntity: entity,
       throwerId,
       estimatedLandTick: tick + sim.totalTicks,
+      estimatedDurationTicks: sim.totalTicks,
       estimatedLandPos: landing,
     })
     console.log(
@@ -343,6 +345,7 @@ export class PearlHandler {
   private getThrowHuntdownShot(bot: Bot, target: Entity): HuntdownPearlPlan | null {
     if (!this.config.throwHuntdown || !this.config.enabled || !this.canThrowPearl(bot)) return null
 
+
     const prediction = Array.from(this.enemyPearlPredictions.values()).find(
       (entry) => entry.throwerId === target.id,
     )
@@ -352,9 +355,10 @@ export class PearlHandler {
     const orgBlockBB = AABBUtils.getEntityAABBRaw({
       position: orgBlockPos,
       height: 1,
-      width: 1,
+      width: 3,
     })
-    const predShot = bot.ender.shotToAABB(orgBlockBB, orgBlockPos)
+    const tickAllowance = Math.floor(prediction.estimatedDurationTicks * 0.8);
+    const predShot = bot.ender.shotToAABB(orgBlockBB, orgBlockPos, undefined, tickAllowance)
 
     if (!predShot?.hit) return null
 

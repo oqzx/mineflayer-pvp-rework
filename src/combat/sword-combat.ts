@@ -43,7 +43,7 @@ import type { goals } from 'mineflayer-pathfinder'
 const { getEntityAABB } = AABBUtils
 
 const PI_HALF = Math.PI / 2
-const DEBUG_ATTACK_SKIPS = false
+const DEBUG_ATTACK_SKIPS = false;
 
 type BotWithPathfinder = Bot & {
   pathfinder: {
